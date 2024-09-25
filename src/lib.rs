@@ -2,7 +2,8 @@ use std::cmp::Ordering;
 use std::fmt::{self, Display, Formatter};
 use std::iter;
 
-use rustc_hash::FxHashMap;
+use itertools::Itertools;
+use rustc_hash::{FxHashMap, FxHashSet};
 use util::GetTwoMut;
 use vector_clock::VectorClock;
 
@@ -50,6 +51,30 @@ impl History {
             }
         }
         graph
+    }
+
+    fn get_write_read_sets(&self) -> Vec<Vec<(FxHashSet<Key>, FxHashSet<Key>)>> {
+        let mut write_reads: Vec<Vec<(FxHashSet<_>, FxHashSet<_>)>> = self
+            .sessions
+            .iter()
+            .map(|sess| vec![Default::default(); sess.len()])
+            .collect();
+        for (s_idx, session) in self.sessions.iter().enumerate() {
+            for (t_idx, transaction) in session.iter().enumerate() {
+                let (writes, reads) = &mut write_reads[s_idx][t_idx];
+                for &e in &transaction.events {
+                    match e {
+                        Event::Read(k, _) => {
+                            reads.insert(k);
+                        }
+                        Event::Write(k, _) => {
+                            writes.insert(k);
+                        }
+                    }
+                }
+            }
+        }
+        write_reads
     }
 
     fn get_writes_per_key(&self) -> FxHashMap<Key, Vec<Vec<usize>>> {
@@ -120,13 +145,61 @@ impl History {
                             if t2 == t1 {
                                 continue;
                             } else if t2.0 == t1.0 && t2.1 > t1.1 {
-                                eprintln!("Cycle detected: {:?} -> {:?}", t1, t2);
+                                eprintln!("Cycle detected: {:?} <-> {:?}", t1, t2);
                                 return false;
                             }
                             rev_commit_order[t1.0][t1.1]
                                 .push(TransactionId(t2_s_idx, writes[*last_write as usize]));
                         }
                     }
+                }
+            }
+        }
+
+        // Check for cycles in the reverse commit order
+        graph.dfs(
+            |TransactionId(s_idx, t_idx)| rev_commit_order[s_idx][t_idx].iter().copied(),
+            |_| {},
+        )
+    }
+
+    pub fn check_read_atomic(&self) -> bool {
+        let graph = self.infer_graph();
+        let Ok(repeatable_reads_graph) = graph.to_repeatable_reads_graph() else {
+            return false;
+        };
+        let write_reads = self.get_write_read_sets();
+
+        let mut rev_commit_order: Vec<_> = self
+            .sessions
+            .iter()
+            .map(|s| vec![Vec::new(); s.len()])
+            .collect();
+        for (t3_s_idx, sess_reads) in graph.reads.iter().enumerate() {
+            let mut last_writes_per_key = FxHashMap::default();
+            for (t3_t_idx, t3_writers) in sess_reads.iter().enumerate() {
+                let (t3_writes, t3_reads) = &write_reads[t3_s_idx][t3_t_idx];
+                for &(t1, k) in t3_writers {
+                    if let Some(&t2) = last_writes_per_key.get(&k) {
+                        if t2 != t1 {
+                            rev_commit_order[t1.0][t1.1].push(t2);
+                        }
+                    }
+                }
+                let mut t3_writers = t3_writers.iter().map(|(t2, _)| *t2).collect_vec();
+                t3_writers.sort();
+                for t2 in t3_writers.into_iter().dedup() {
+                    for k in write_reads[t2.0][t2.1].0.intersection(t3_reads) {
+                        let t1 = repeatable_reads_graph[t3_s_idx][t3_t_idx][k];
+                        if t1 != t2 {
+                            rev_commit_order[t1.0][t1.1].push(t2);
+                        }
+                    }
+                }
+                for &k in t3_writes {
+                    last_writes_per_key
+                        .entry(k)
+                        .or_insert(TransactionId(t3_s_idx, t3_t_idx));
                 }
             }
         }
@@ -189,7 +262,7 @@ impl Transaction {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TransactionId(pub usize, pub usize);
 
 #[derive(Clone, Copy, strum::Display)]
@@ -225,6 +298,8 @@ impl Display for Value {
         write!(f, "{}", self.0)
     }
 }
+
+type RepeatableReadsGraph = Vec<Vec<FxHashMap<Key, TransactionId>>>;
 
 #[derive(Debug)]
 struct WriteReadGraph {
@@ -330,6 +405,28 @@ impl WriteReadGraph {
 
         true
     }
+
+    /// Fails if repeatable reads does not hold
+    fn to_repeatable_reads_graph(&self) -> Result<RepeatableReadsGraph, ()> {
+        let mut read_map: RepeatableReadsGraph = self
+            .reads
+            .iter()
+            .map(|s| vec![FxHashMap::default(); s.len()])
+            .collect();
+        for (s_idx, session) in self.reads.iter().enumerate() {
+            for (t_idx, reads) in session.iter().enumerate() {
+                for &(writer_tid, k) in reads {
+                    if matches!(read_map[s_idx][t_idx].insert(k, writer_tid), Some(tid) if tid != writer_tid)
+                    {
+                        eprintln!("Non repeatable read: ({s_idx}, {t_idx})");
+                        return Err(());
+                    }
+                }
+            }
+        }
+
+        Ok(read_map)
+    }
 }
 
 #[cfg(test)]
@@ -385,6 +482,7 @@ mod tests {
         let contents = fs::read_to_string(file).unwrap();
         let history = parse_test_history(&contents);
         assert!(history.check_causal());
+        assert!(history.check_read_atomic());
     }
 
     #[test_resources("res/tests/read-atomic/*.txt")]
@@ -392,6 +490,7 @@ mod tests {
         let contents = fs::read_to_string(file).unwrap();
         let history = parse_test_history(&contents);
         assert!(!history.check_causal());
+        assert!(history.check_read_atomic());
     }
 
     #[test_resources("res/tests/read-committed/*.txt")]
@@ -399,6 +498,7 @@ mod tests {
         let contents = fs::read_to_string(file).unwrap();
         let history = parse_test_history(&contents);
         assert!(!history.check_causal());
+        assert!(!history.check_read_atomic());
     }
 
     #[test_resources("res/tests/none/*.txt")]
@@ -406,5 +506,6 @@ mod tests {
         let contents = fs::read_to_string(file).unwrap();
         let history = parse_test_history(&contents);
         assert!(!history.check_causal());
+        assert!(!history.check_read_atomic());
     }
 }
