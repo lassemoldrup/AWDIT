@@ -161,7 +161,7 @@ fn generate_causal_history(app: &App) -> History {
     for tid @ &TransactionId(s_idx, t_idx) in commit_order.iter() {
         if t_idx > 0 {
             let (pred, succ) = hb[s_idx].get_two_mut(t_idx - 1, t_idx);
-            succ.join(&pred);
+            succ.join(pred);
             succ.join1(s_idx, t_idx as isize - 1);
         }
         let mut read_map = FxHashMap::default();
@@ -233,7 +233,7 @@ fn generate_causal_history(app: &App) -> History {
                                     // Find the latest writer to each keys in keys
                                     keys.iter().filter_map(move |k2|
                                         // Last write to k2 in the session
-                                        writes_per_loc_per_session[tid.0].get(&k2).and_then(|ws| {
+                                        writes_per_loc_per_session[tid.0].get(k2).and_then(|ws| {
                                             ws.binary_search(&tid.1)
                                                 .or_else(|i| i.checked_sub(1).ok_or(()))
                                                 .ok()

@@ -39,7 +39,7 @@ impl VectorClock {
         self.0[index] = cmp::min(self.0[index], value);
     }
 
-    pub fn iter<'v>(&'v self) -> impl Iterator<Item = isize> + Captures<'v> {
+    pub fn iter(&self) -> impl Iterator<Item = isize> + Captures<'_> {
         self.0.iter().copied()
     }
 }

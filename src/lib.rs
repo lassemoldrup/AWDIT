@@ -53,20 +53,18 @@ impl History {
         graph
     }
 
-    fn get_write_read_sets(&self) -> Vec<Vec<(FxHashSet<Key>, FxHashSet<Key>)>> {
-        let mut write_reads: Vec<Vec<(FxHashSet<_>, FxHashSet<_>)>> = self
+    fn get_write_sets(&self) -> Vec<Vec<FxHashSet<Key>>> {
+        let mut write_sets: Vec<Vec<FxHashSet<_>>> = self
             .sessions
             .iter()
-            .map(|sess| vec![Default::default(); sess.len()])
+            .map(|sess| vec![FxHashSet::default(); sess.len()])
             .collect();
         for (s_idx, session) in self.sessions.iter().enumerate() {
             for (t_idx, transaction) in session.iter().enumerate() {
-                let (writes, reads) = &mut write_reads[s_idx][t_idx];
+                let writes = &mut write_sets[s_idx][t_idx];
                 for &e in &transaction.events {
                     match e {
-                        Event::Read(k, _) => {
-                            reads.insert(k);
-                        }
+                        Event::Read(..) => {}
                         Event::Write(k, _) => {
                             writes.insert(k);
                         }
@@ -74,7 +72,29 @@ impl History {
                 }
             }
         }
-        write_reads
+        write_sets
+    }
+
+    fn get_read_sets(&self) -> Vec<Vec<FxHashSet<Key>>> {
+        let mut read_sets: Vec<Vec<FxHashSet<_>>> = self
+            .sessions
+            .iter()
+            .map(|sess| vec![FxHashSet::default(); sess.len()])
+            .collect();
+        for (s_idx, session) in self.sessions.iter().enumerate() {
+            for (t_idx, transaction) in session.iter().enumerate() {
+                let reads = &mut read_sets[s_idx][t_idx];
+                for &e in &transaction.events {
+                    match e {
+                        Event::Read(k, _) => {
+                            reads.insert(k);
+                        }
+                        Event::Write(..) => {}
+                    }
+                }
+            }
+        }
+        read_sets
     }
 
     fn get_writes_per_key(&self) -> FxHashMap<Key, Vec<Vec<usize>>> {
@@ -168,7 +188,8 @@ impl History {
         let Ok(repeatable_reads_graph) = graph.to_repeatable_reads_graph() else {
             return false;
         };
-        let write_reads = self.get_write_read_sets();
+        let write_sets = self.get_write_sets();
+        let read_sets = self.get_read_sets();
 
         let mut rev_commit_order: Vec<_> = self
             .sessions
@@ -178,7 +199,8 @@ impl History {
         for (t3_s_idx, sess_reads) in graph.reads.iter().enumerate() {
             let mut last_writes_per_key = FxHashMap::default();
             for (t3_t_idx, t3_writers) in sess_reads.iter().enumerate() {
-                let (t3_writes, t3_reads) = &write_reads[t3_s_idx][t3_t_idx];
+                let t3_writes = &write_sets[t3_s_idx][t3_t_idx];
+                let t3_reads = &read_sets[t3_s_idx][t3_t_idx];
                 for &(t1, k) in t3_writers {
                     if let Some(&t2) = last_writes_per_key.get(&k) {
                         if t2 != t1 {
@@ -189,7 +211,7 @@ impl History {
                 let mut t3_writers = t3_writers.iter().map(|(t2, _)| *t2).collect_vec();
                 t3_writers.sort();
                 for t2 in t3_writers.into_iter().dedup() {
-                    for k in write_reads[t2.0][t2.1].0.intersection(t3_reads) {
+                    for k in write_sets[t2.0][t2.1].intersection(t3_reads) {
                         let t1 = repeatable_reads_graph[t3_s_idx][t3_t_idx][k];
                         if t1 != t2 {
                             rev_commit_order[t1.0][t1.1].push(t2);
@@ -201,6 +223,37 @@ impl History {
                         .entry(k)
                         .or_insert(TransactionId(t3_s_idx, t3_t_idx));
                 }
+            }
+        }
+
+        // Check for cycles in the reverse commit order
+        graph.dfs(
+            |TransactionId(s_idx, t_idx)| rev_commit_order[s_idx][t_idx].iter().copied(),
+            |_| {},
+        )
+    }
+
+    pub fn check_read_committed(&self) -> bool {
+        let graph = self.infer_graph();
+        let write_sets = self.get_write_sets();
+
+        let mut rev_commit_order: Vec<_> = self
+            .sessions
+            .iter()
+            .map(|s| vec![Vec::new(); s.len()])
+            .collect();
+        for t3_writers in graph.reads.iter().flatten() {
+            let mut earliest_writer_per_loc = FxHashMap::default();
+            let mut reads = FxHashSet::default();
+            for &(t2, k1) in t3_writers {
+                for k2 in write_sets[t2.0][t2.1].intersection(&reads) {
+                    let t1: TransactionId = earliest_writer_per_loc[k2];
+                    if t1 != t2 {
+                        rev_commit_order[t1.0][t1.1].push(t2);
+                    }
+                }
+                earliest_writer_per_loc.insert(k1, t2);
+                reads.insert(k1);
             }
         }
 
@@ -483,6 +536,7 @@ mod tests {
         let history = parse_test_history(&contents);
         assert!(history.check_causal());
         assert!(history.check_read_atomic());
+        assert!(history.check_read_committed());
     }
 
     #[test_resources("res/tests/read-atomic/*.txt")]
@@ -491,6 +545,7 @@ mod tests {
         let history = parse_test_history(&contents);
         assert!(!history.check_causal());
         assert!(history.check_read_atomic());
+        assert!(history.check_read_committed());
     }
 
     #[test_resources("res/tests/read-committed/*.txt")]
@@ -499,6 +554,7 @@ mod tests {
         let history = parse_test_history(&contents);
         assert!(!history.check_causal());
         assert!(!history.check_read_atomic());
+        assert!(history.check_read_committed());
     }
 
     #[test_resources("res/tests/none/*.txt")]
@@ -507,5 +563,6 @@ mod tests {
         let history = parse_test_history(&contents);
         assert!(!history.check_causal());
         assert!(!history.check_read_atomic());
+        assert!(!history.check_read_committed());
     }
 }
