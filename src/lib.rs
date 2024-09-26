@@ -539,7 +539,7 @@ mod tests {
         assert!(history.check_read_committed());
     }
 
-    #[test_resources("res/tests/read-atomic/*.txt")]
+    #[test_resources("res/tests/read-atomic/**/*.txt")]
     fn test_read_atomic(file: &str) {
         let contents = fs::read_to_string(file).unwrap();
         let history = parse_test_history(&contents);
@@ -548,7 +548,7 @@ mod tests {
         assert!(history.check_read_committed());
     }
 
-    #[test_resources("res/tests/read-committed/*.txt")]
+    #[test_resources("res/tests/read-committed/**/*.txt")]
     fn test_read_committed(file: &str) {
         let contents = fs::read_to_string(file).unwrap();
         let history = parse_test_history(&contents);
@@ -557,7 +557,7 @@ mod tests {
         assert!(history.check_read_committed());
     }
 
-    #[test_resources("res/tests/none/*.txt")]
+    #[test_resources("res/tests/none/**/*.txt")]
     fn test_inconsistent(file: &str) {
         let contents = fs::read_to_string(file).unwrap();
         let history = parse_test_history(&contents);
