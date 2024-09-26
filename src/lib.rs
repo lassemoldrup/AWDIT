@@ -245,7 +245,7 @@ impl History {
         for t3_writers in graph.reads.iter().flatten() {
             let mut earliest_writer_per_loc = FxHashMap::default();
             let mut reads = FxHashSet::default();
-            for &(t2, k1) in t3_writers {
+            for &(t2, k1) in t3_writers.iter().rev() {
                 for k2 in write_sets[t2.0][t2.1].intersection(&reads) {
                     let t1: TransactionId = earliest_writer_per_loc[k2];
                     if t1 != t2 {

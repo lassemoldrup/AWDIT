@@ -27,8 +27,8 @@ struct App {
 impl App {
     fn _find_inconsistent(&self) {
         for _ in 0..100000 {
-            let history = PartialHistory::generate(self).into_read_atomic_history();
-            if !history.check_causal() {
+            let history = PartialHistory::generate(self).into_read_committed_history();
+            if !history.check_read_atomic() {
                 println!("{history}");
                 return;
             }
@@ -396,6 +396,53 @@ impl PartialHistory {
             sessions: self.sessions,
         }
     }
+
+    fn into_read_committed_history(mut self) -> History {
+        let mut rng = rand::thread_rng();
+        let non_init_sessions = self.sessions.len() - 1;
+
+        // Values written by transactions in commit order
+        let mut writes_per_loc: Vec<Vec<(TransactionId, Value)>> = vec![vec![]; self.locations];
+        let mut idx_in_writes_per_loc = vec![FxHashMap::default(); self.locations];
+        let mut write_sets: Vec<Vec<FxHashSet<Key>>> = self
+            .sessions
+            .iter()
+            .map(|s| vec![FxHashSet::default(); s.len()])
+            .collect();
+        for tid @ &TransactionId(s_idx, t_idx) in self.commit_order.iter() {
+            let mut writers = FxHashSet::default();
+            for event in self.sessions[s_idx][t_idx].events.iter_mut() {
+                match event {
+                    Event::Read(k, v) => {
+                        // Find co-first write we are allowed to read from
+                        let &earliest_legal_write = writers
+                            .iter()
+                            .filter(|tid: &&TransactionId| write_sets[tid.0][tid.1].contains(k))
+                            .max_by_key(|tid| self.rev_commit_order[tid])
+                            .unwrap_or(&TransactionId(non_init_sessions, 0));
+                        let earliest_legal_idx = idx_in_writes_per_loc[k.0][&earliest_legal_write];
+
+                        let &(write_tid, write_value) = writes_per_loc[k.0][earliest_legal_idx..]
+                            .choose(&mut rng)
+                            .expect("Should have at least one valid writer");
+                        *v = write_value;
+                        writers.insert(write_tid);
+                    }
+                    Event::Write(k, v) => {
+                        idx_in_writes_per_loc[k.0].insert(*tid, writes_per_loc[k.0].len());
+                        writes_per_loc[k.0].push((*tid, *v));
+                        write_sets[s_idx][t_idx].insert(*k);
+                    }
+                }
+            }
+        }
+
+        self.sessions.retain(|s| !s.is_empty());
+        self.sessions.shuffle(&mut rng);
+        History {
+            sessions: self.sessions,
+        }
+    }
 }
 
 fn main() {
@@ -403,7 +450,7 @@ fn main() {
     // app._find_inconsistent();
     let history = PartialHistory::generate(&app);
     let history = match app.isolation {
-        IsolationLevel::ReadCommitted => todo!(),
+        IsolationLevel::ReadCommitted => history.into_read_committed_history(),
         IsolationLevel::ReadAtomic => history.into_read_atomic_history(),
         IsolationLevel::Causal => history.into_causal_history(),
     };
