@@ -4,7 +4,7 @@ use std::iter;
 
 use itertools::Itertools;
 use rustc_hash::{FxHashMap, FxHashSet};
-use util::GetTwoMut;
+use util::{intersect_map, GetTwoMut};
 use vector_clock::VectorClock;
 
 pub mod fenwick;
@@ -74,28 +74,6 @@ impl History {
             }
         }
         write_sets
-    }
-
-    fn get_read_sets(&self) -> Vec<Vec<FxHashSet<Key>>> {
-        let mut read_sets: Vec<Vec<FxHashSet<_>>> = self
-            .sessions
-            .iter()
-            .map(|sess| vec![FxHashSet::default(); sess.len()])
-            .collect();
-        for (s_idx, session) in self.sessions.iter().enumerate() {
-            for (t_idx, transaction) in session.iter().enumerate() {
-                let reads = &mut read_sets[s_idx][t_idx];
-                for &e in &transaction.events {
-                    match e {
-                        Event::Read(k, _) => {
-                            reads.insert(k);
-                        }
-                        Event::Write(..) => {}
-                    }
-                }
-            }
-        }
-        read_sets
     }
 
     fn get_writes_per_key(&self) -> FxHashMap<Key, Vec<Vec<usize>>> {
@@ -190,7 +168,6 @@ impl History {
             return false;
         };
         let write_sets = self.get_write_sets();
-        let read_sets = self.get_read_sets();
 
         let mut rev_commit_order: Vec<_> = self
             .sessions
@@ -201,7 +178,6 @@ impl History {
             let mut last_writes_per_key = FxHashMap::default();
             for (t3_t_idx, t3_writers) in sess_reads.iter().enumerate() {
                 let t3_writes = &write_sets[t3_s_idx][t3_t_idx];
-                let t3_reads = &read_sets[t3_s_idx][t3_t_idx];
                 for &(t1, k) in t3_writers {
                     if let Some(&t2) = last_writes_per_key.get(&k) {
                         if t2 != t1 {
@@ -212,8 +188,10 @@ impl History {
                 let mut t3_writers = t3_writers.iter().map(|(t2, _)| *t2).collect_vec();
                 t3_writers.sort();
                 for t2 in t3_writers.into_iter().dedup() {
-                    for k in write_sets[t2.0][t2.1].intersection(t3_reads) {
-                        let t1 = repeatable_reads_graph[t3_s_idx][t3_t_idx][k];
+                    for &t1 in intersect_map(
+                        &repeatable_reads_graph[t3_s_idx][t3_t_idx],
+                        &write_sets[t2.0][t2.1],
+                    ) {
                         if t1 != t2 {
                             rev_commit_order[t1.0][t1.1].push(t2);
                         }
@@ -244,17 +222,14 @@ impl History {
             .map(|s| vec![Vec::new(); s.len()])
             .collect();
         for t3_writers in graph.reads.iter().flatten() {
-            let mut earliest_writer_per_loc = FxHashMap::default();
-            let mut reads = FxHashSet::default();
-            for &(t2, k1) in t3_writers.iter().rev() {
-                for k2 in write_sets[t2.0][t2.1].intersection(&reads) {
-                    let t1: TransactionId = earliest_writer_per_loc[k2];
+            let mut earliest_writer_per_loc: FxHashMap<Key, TransactionId> = FxHashMap::default();
+            for &(t2, k) in t3_writers.iter().rev() {
+                for &t1 in intersect_map(&earliest_writer_per_loc, &write_sets[t2.0][t2.1]) {
                     if t1 != t2 {
                         rev_commit_order[t1.0][t1.1].push(t2);
                     }
                 }
-                earliest_writer_per_loc.insert(k1, t2);
-                reads.insert(k1);
+                earliest_writer_per_loc.insert(k, t2);
             }
         }
 
