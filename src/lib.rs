@@ -8,6 +8,7 @@ use util::GetTwoMut;
 use vector_clock::VectorClock;
 
 pub mod fenwick;
+pub mod formats;
 pub mod partial_order;
 pub mod util;
 pub mod vector_clock;

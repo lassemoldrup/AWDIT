@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
+use std::time::Instant;
 
-use clap::{Parser, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use consistency::util::{intersect_map, GetTwoMut};
 use consistency::vector_clock::VectorClock;
 use consistency::{Event, History, Key, Transaction, TransactionId, Value};
@@ -10,6 +12,23 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 #[derive(Parser)]
 struct App {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    Generate(GenerateArgs),
+    Check {
+        #[clap(short, long, default_value_t = IsolationLevel::Causal)]
+        isolation: IsolationLevel,
+        #[arg(required = true)]
+        path: PathBuf,
+    },
+}
+
+#[derive(Args)]
+struct GenerateArgs {
     #[clap(short, long, default_value_t = 8)]
     locations: usize,
     #[clap(short, long, default_value_t = 20)]
@@ -24,7 +43,7 @@ struct App {
     alpha: f64,
 }
 
-impl App {
+impl GenerateArgs {
     fn _find_inconsistent(&self) {
         for _ in 0..100000 {
             let history = PartialHistory::generate(self).into_read_committed_history();
@@ -55,7 +74,7 @@ struct PartialHistory {
 }
 
 impl PartialHistory {
-    fn generate(app: &App) -> Self {
+    fn generate(app: &GenerateArgs) -> Self {
         if app.alpha <= 0. {
             panic!("α must be positive");
         }
@@ -447,14 +466,39 @@ impl PartialHistory {
 
 fn main() {
     let app = App::parse();
-    // app._find_inconsistent();
-    let history = PartialHistory::generate(&app);
-    let history = match app.isolation {
-        IsolationLevel::ReadCommitted => history.into_read_committed_history(),
-        IsolationLevel::ReadAtomic => history.into_read_atomic_history(),
-        IsolationLevel::Causal => history.into_causal_history(),
-    };
-    println!("{history}");
+    match app.command {
+        Command::Generate(args) => {
+            // app._find_inconsistent();
+            let history = PartialHistory::generate(&args);
+            let history = match args.isolation {
+                IsolationLevel::ReadCommitted => history.into_read_committed_history(),
+                IsolationLevel::ReadAtomic => history.into_read_atomic_history(),
+                IsolationLevel::Causal => history.into_causal_history(),
+            };
+            println!("{history}");
+        }
+        Command::Check { isolation, path } => {
+            let parsing_start = Instant::now();
+            let history = History::parse_plume_history(path).unwrap();
+            let parsing_elapsed = parsing_start.elapsed();
+            eprintln!("Done parsing: {}ms", parsing_elapsed.as_millis());
+
+            let checking_start = Instant::now();
+            let success = match isolation {
+                IsolationLevel::ReadCommitted => history.check_read_committed(),
+                IsolationLevel::ReadAtomic => history.check_read_atomic(),
+                IsolationLevel::Causal => history.check_causal(),
+            };
+            let checking_elapsed = checking_start.elapsed();
+            eprintln!("Done checking: {}ms", checking_elapsed.as_millis());
+
+            if success {
+                println!("History is consistent");
+            } else {
+                println!("History is not consistent");
+            }
+        }
+    }
 }
 
 fn pair_to_tid(pair: (usize, isize)) -> Option<TransactionId> {
