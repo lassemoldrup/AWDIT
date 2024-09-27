@@ -2,10 +2,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::time::Instant;
 
+use anyhow::Context;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use consistency::util::{intersect_map, GetTwoMut};
 use consistency::vector_clock::VectorClock;
-use consistency::{Event, History, Key, Transaction, TransactionId, Value};
+use consistency::{
+    ConsistencyReport, Event, FullViolationReport, History, Key, KeyValuePair, Transaction,
+    TransactionId, Value, WeakestViolationReport,
+};
 use rand::prelude::*;
 use rand_distr::{Bernoulli, Pareto, Uniform};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -24,6 +28,8 @@ enum Command {
         isolation: IsolationLevel,
         #[arg(required = true)]
         path: PathBuf,
+        #[clap(short, long, default_value_t = ReportMode::Weakest)]
+        report_mode: ReportMode,
     },
 }
 
@@ -47,7 +53,8 @@ impl GenerateArgs {
     fn _find_inconsistent(&self) {
         for _ in 0..100000 {
             let history = PartialHistory::generate(self).into_read_committed_history();
-            if !history.check_read_atomic() {
+            let mut checker = history.checker::<WeakestViolationReport>();
+            if !checker.check_read_atomic().is_success() {
                 println!("{history}");
                 return;
             }
@@ -57,13 +64,18 @@ impl GenerateArgs {
 }
 
 #[derive(Clone, PartialEq, Eq, ValueEnum, strum::EnumString, strum::Display)]
+#[strum(serialize_all = "kebab-case")]
 enum IsolationLevel {
-    #[strum(serialize = "read-committed")]
     ReadCommitted,
-    #[strum(serialize = "read-atomic")]
     ReadAtomic,
-    #[strum(serialize = "causal")]
     Causal,
+}
+
+#[derive(Clone, ValueEnum, strum::EnumString, strum::Display)]
+#[strum(serialize_all = "kebab-case")]
+enum ReportMode {
+    Weakest,
+    Full,
 }
 
 struct PartialHistory {
@@ -89,7 +101,12 @@ impl PartialHistory {
         // Generate initial transaction
         sessions[num_sessions][0]
             .events
-            .extend((0..app.locations).map(|k| Event::Write(Key(k), Value(0))));
+            .extend((0..app.locations).map(|k| {
+                Event::Write(KeyValuePair {
+                    key: Key(k),
+                    value: Value(0),
+                })
+            }));
 
         let session_dist = Uniform::new(0, num_sessions);
         let event_dist = Bernoulli::new(app.read_ratio).unwrap();
@@ -126,7 +143,7 @@ impl PartialHistory {
             for e in sessions[session].last().unwrap().events.iter() {
                 match e {
                     // If key already written to, commit the transaction
-                    Event::Write(k, _) if *k == key => should_commit = true,
+                    Event::Write(kv) if kv.key == key => should_commit = true,
                     _ => {}
                 }
             }
@@ -140,10 +157,13 @@ impl PartialHistory {
             let is_read = event_dist.sample(&mut rng);
             let event = if is_read {
                 // The value will be updated after the commit order is determined
-                Event::Read(key, Value(0))
+                Event::Read(KeyValuePair {
+                    key,
+                    value: Value(0),
+                })
             } else {
-                let value = *value_map.entry(key).and_modify(|v| *v += 1).or_insert(1);
-                Event::Write(key, Value(value))
+                let value = Value(*value_map.entry(key).and_modify(|v| *v += 1).or_insert(1));
+                Event::Write(KeyValuePair { key, value })
             };
             sessions[session].last_mut().unwrap().push(event);
 
@@ -199,10 +219,10 @@ impl PartialHistory {
             let mut writers: BTreeMap<usize, Vec<Key>> = BTreeMap::new();
             for event in self.sessions[s_idx][t_idx].events.iter_mut() {
                 match event {
-                    Event::Read(k, v) => {
+                    Event::Read(kv) => {
                         // We implement repeatable reads explicitly as an optimization
-                        if let Some(&(_, write_value)) = read_map.get(k) {
-                            *v = write_value;
+                        if let Some(&(_, write_value)) = read_map.get(&kv.key) {
+                            kv.value = write_value;
                             continue;
                         }
                         // Find co-first write that the read is allowed to read from
@@ -212,24 +232,27 @@ impl PartialHistory {
                             .filter_map(pair_to_tid)
                             .filter_map(|tid| {
                                 // Last write to k in the session
-                                writes_per_loc_per_session[tid.0].get(&*k).and_then(|ws| {
-                                    ws.partition_point(|&i| i <= tid.1)
-                                        .checked_sub(1)
-                                        .map(|i| TransactionId(tid.0, ws[i]))
-                                })
+                                writes_per_loc_per_session[tid.0]
+                                    .get(&kv.key)
+                                    .and_then(|ws| {
+                                        ws.partition_point(|&i| i <= tid.1)
+                                            .checked_sub(1)
+                                            .map(|i| TransactionId(tid.0, ws[i]))
+                                    })
                             })
                             .max_by_key(|tid| self.rev_commit_order[tid])
                             .unwrap_or(TransactionId(non_init_sessions, 0));
-                        let earliest_legal_idx = idx_in_writes_per_loc[k.0][&earliest_legal_write];
+                        let earliest_legal_idx =
+                            idx_in_writes_per_loc[kv.key.0][&earliest_legal_write];
 
                         // Use rejection sampling to determine a choice out of the remaining possibilities
-                        let num_choices = writes_per_loc[k.0].len() - earliest_legal_idx;
+                        let num_choices = writes_per_loc[kv.key.0].len() - earliest_legal_idx;
                         let mut choices = (0..num_choices).collect::<Vec<_>>();
                         choices.shuffle(&mut rng);
                         let mut consistent_choice = None;
                         'choice_loop: for choice in choices {
                             let (write_tid, write_value) =
-                                writes_per_loc[k.0][earliest_legal_idx + choice];
+                                writes_per_loc[kv.key.0][earliest_legal_idx + choice];
                             let write_co_idx = self.rev_commit_order[&write_tid];
 
                             // Optimization: we know it's safe to read from writes co-before any of our other writers
@@ -283,25 +306,26 @@ impl PartialHistory {
 
                         let (write_tid, write_value) =
                             consistent_choice.expect("Should have at least one valid writer");
-                        *v = write_value;
+                        kv.value = write_value;
                         writers
                             .entry(self.rev_commit_order[&write_tid])
                             .or_default()
-                            .push(*k);
-                        read_map.insert(*k, (write_tid, write_value));
+                            .push(kv.key);
+                        read_map.insert(kv.key, (write_tid, write_value));
                         hb[s_idx][t_idx].join1(write_tid.0, write_tid.1 as isize);
                         if write_tid.0 != s_idx {
                             let (pred_sess, succ_sess) = hb.get_two_mut(write_tid.0, s_idx);
                             succ_sess[t_idx].join(&pred_sess[write_tid.1]);
                         }
                     }
-                    Event::Write(k, v) => {
+                    Event::Write(kv) => {
                         writes_per_loc_per_session[s_idx]
-                            .entry(*k)
+                            .entry(kv.key)
                             .or_default()
                             .push(t_idx);
-                        idx_in_writes_per_loc[k.0].insert(*tid, writes_per_loc[k.0].len());
-                        writes_per_loc[k.0].push((*tid, *v));
+                        idx_in_writes_per_loc[kv.key.0]
+                            .insert(*tid, writes_per_loc[kv.key.0].len());
+                        writes_per_loc[kv.key.0].push((*tid, kv.value));
                     }
                 }
             }
@@ -333,16 +357,16 @@ impl PartialHistory {
             let mut writers = BTreeSet::new();
             for event in self.sessions[s_idx][t_idx].events.iter_mut() {
                 match event {
-                    Event::Read(k, v) => {
+                    Event::Read(kv) => {
                         // We implement repeatable reads explicitly
-                        if let Some(&(_, write_value)) = read_map.get(k) {
-                            *v = write_value;
+                        if let Some(&(_, write_value)) = read_map.get(&kv.key) {
+                            kv.value = write_value;
                             continue;
                         }
 
                         // Find co-first write we are allowed to read from
                         let earliest_legal_write = writes_per_loc_per_session[s_idx]
-                            .get(k)
+                            .get(&kv.key)
                             // Search our own session for the last write to k before us
                             .and_then(|ws| {
                                 ws.partition_point(|&i| i < t_idx)
@@ -351,19 +375,20 @@ impl PartialHistory {
                             })
                             .into_iter()
                             .chain(read_map.iter().map(|(_, (tid, _))| *tid))
-                            .filter(|tid| write_sets[tid.0][tid.1].contains(k))
+                            .filter(|tid| write_sets[tid.0][tid.1].contains(&kv.key))
                             .max_by_key(|tid| self.rev_commit_order[tid])
                             .unwrap_or(TransactionId(non_init_sessions, 0));
-                        let earliest_legal_idx = idx_in_writes_per_loc[k.0][&earliest_legal_write];
+                        let earliest_legal_idx =
+                            idx_in_writes_per_loc[kv.key.0][&earliest_legal_write];
 
                         // Use rejection sampling to determine a choice out of the remaining possibilities
-                        let num_choices = writes_per_loc[k.0].len() - earliest_legal_idx;
+                        let num_choices = writes_per_loc[kv.key.0].len() - earliest_legal_idx;
                         let mut choices = (0..num_choices).collect::<Vec<_>>();
                         choices.shuffle(&mut rng);
                         let mut consistent_choice = None;
                         'choice_loop: for choice in choices {
                             let (write_tid, write_value) =
-                                writes_per_loc[k.0][earliest_legal_idx + choice];
+                                writes_per_loc[kv.key.0][earliest_legal_idx + choice];
                             let write_co_idx = self.rev_commit_order[&write_tid];
 
                             // Optimization: we know it's safe to read from writes co-before any of our other writers
@@ -393,17 +418,18 @@ impl PartialHistory {
                             consistent_choice.expect("Should have at least one valid writer");
                         let write_co_idx = self.rev_commit_order[&write_tid];
                         writers.insert(write_co_idx);
-                        *v = write_value;
-                        read_map.insert(*k, (write_tid, write_value));
+                        kv.value = write_value;
+                        read_map.insert(kv.key, (write_tid, write_value));
                     }
-                    Event::Write(k, v) => {
+                    Event::Write(kv) => {
                         writes_per_loc_per_session[s_idx]
-                            .entry(*k)
+                            .entry(kv.key)
                             .or_default()
                             .push(t_idx);
-                        idx_in_writes_per_loc[k.0].insert(*tid, writes_per_loc[k.0].len());
-                        writes_per_loc[k.0].push((*tid, *v));
-                        write_sets[s_idx][t_idx].insert(*k);
+                        idx_in_writes_per_loc[kv.key.0]
+                            .insert(*tid, writes_per_loc[kv.key.0].len());
+                        writes_per_loc[kv.key.0].push((*tid, kv.value));
+                        write_sets[s_idx][t_idx].insert(kv.key);
                     }
                 }
             }
@@ -432,25 +458,30 @@ impl PartialHistory {
             let mut writers = FxHashSet::default();
             for event in self.sessions[s_idx][t_idx].events.iter_mut() {
                 match event {
-                    Event::Read(k, v) => {
+                    Event::Read(kv) => {
                         // Find co-first write we are allowed to read from
                         let &earliest_legal_write = writers
                             .iter()
-                            .filter(|tid: &&TransactionId| write_sets[tid.0][tid.1].contains(k))
+                            .filter(|tid: &&TransactionId| {
+                                write_sets[tid.0][tid.1].contains(&kv.key)
+                            })
                             .max_by_key(|tid| self.rev_commit_order[tid])
                             .unwrap_or(&TransactionId(non_init_sessions, 0));
-                        let earliest_legal_idx = idx_in_writes_per_loc[k.0][&earliest_legal_write];
+                        let earliest_legal_idx =
+                            idx_in_writes_per_loc[kv.key.0][&earliest_legal_write];
 
-                        let &(write_tid, write_value) = writes_per_loc[k.0][earliest_legal_idx..]
+                        let &(write_tid, write_value) = writes_per_loc[kv.key.0]
+                            [earliest_legal_idx..]
                             .choose(&mut rng)
                             .expect("Should have at least one valid writer");
-                        *v = write_value;
+                        kv.value = write_value;
                         writers.insert(write_tid);
                     }
-                    Event::Write(k, v) => {
-                        idx_in_writes_per_loc[k.0].insert(*tid, writes_per_loc[k.0].len());
-                        writes_per_loc[k.0].push((*tid, *v));
-                        write_sets[s_idx][t_idx].insert(*k);
+                    Event::Write(kv) => {
+                        idx_in_writes_per_loc[kv.key.0]
+                            .insert(*tid, writes_per_loc[kv.key.0].len());
+                        writes_per_loc[kv.key.0].push((*tid, kv.value));
+                        write_sets[s_idx][t_idx].insert(kv.key);
                     }
                 }
             }
@@ -464,7 +495,7 @@ impl PartialHistory {
     }
 }
 
-fn main() {
+fn main() -> anyhow::Result<()> {
     let app = App::parse();
     match app.command {
         Command::Generate(args) => {
@@ -477,28 +508,37 @@ fn main() {
             };
             println!("{history}");
         }
-        Command::Check { isolation, path } => {
+        Command::Check {
+            isolation,
+            path,
+            report_mode,
+        } => {
             let parsing_start = Instant::now();
-            let history = History::parse_plume_history(path).unwrap();
+            let history = History::parse_plume_history(path)
+                .context("Failed to parse path as Plume history")?;
             let parsing_elapsed = parsing_start.elapsed();
-            eprintln!("Done parsing: {}ms", parsing_elapsed.as_millis());
+            println!("Done parsing: {}ms", parsing_elapsed.as_millis());
 
-            let checking_start = Instant::now();
-            let success = match isolation {
-                IsolationLevel::ReadCommitted => history.check_read_committed(),
-                IsolationLevel::ReadAtomic => history.check_read_atomic(),
-                IsolationLevel::Causal => history.check_causal(),
-            };
-            let checking_elapsed = checking_start.elapsed();
-            eprintln!("Done checking: {}ms", checking_elapsed.as_millis());
-
-            if success {
-                println!("History is consistent");
-            } else {
-                println!("History is not consistent");
+            macro_rules! check_history {
+                ($report:ty) => {{
+                    let mut checker = history.checker::<$report>();
+                    match isolation {
+                        IsolationLevel::ReadCommitted => checker.check_read_committed(),
+                        IsolationLevel::ReadAtomic => checker.check_read_atomic(),
+                        IsolationLevel::Causal => checker.check_causal(),
+                    }
+                }};
             }
+            let checking_start = Instant::now();
+            match report_mode {
+                ReportMode::Weakest => println!("{}", check_history!(WeakestViolationReport)),
+                ReportMode::Full => println!("{}", check_history!(FullViolationReport)),
+            }
+            let checking_elapsed = checking_start.elapsed();
+            println!("Done checking: {}ms", checking_elapsed.as_millis());
         }
     }
+    Ok(())
 }
 
 fn pair_to_tid(pair: (usize, isize)) -> Option<TransactionId> {

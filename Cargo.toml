@@ -12,6 +12,7 @@ rand_distr = "0.4"
 itertools = "0.13"
 either = "1.13"
 thiserror = "1.0"
+anyhow = "1.0"
 regex = "1.10"
 
 [dev-dependencies]

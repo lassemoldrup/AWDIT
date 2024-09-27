@@ -5,7 +5,7 @@ use std::{fs, io};
 use regex::Regex;
 use rustc_hash::FxHashMap;
 
-use crate::{Event, Key, Transaction, Value};
+use crate::{Event, Key, KeyValuePair, Transaction, Value};
 
 use super::History;
 
@@ -37,9 +37,13 @@ impl History {
                 .parse::<i64>()
                 .map_err(|_| ParseHistoryError::InvalidPlumeFormat)?;
 
+            let kv = KeyValuePair {
+                key: Key(key),
+                value: Value(val),
+            };
             let event = match op {
-                "r" => Event::Read(Key(key), Value(val)),
-                "w" => Event::Write(Key(key), Value(val)),
+                "r" => Event::Read(kv),
+                "w" => Event::Write(kv),
                 _ => return Err(ParseHistoryError::InvalidPlumeFormat),
             };
             let s_idx = *session_map.entry(sess).or_insert_with(|| {
