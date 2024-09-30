@@ -4,6 +4,7 @@ use std::{iter, mem};
 
 use itertools::Itertools;
 use rustc_hash::{FxHashMap, FxHashSet};
+use smallvec::SmallVec;
 use util::{intersect_map, GetTwoMut};
 use vector_clock::VectorClock;
 
@@ -226,6 +227,49 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
         Ok(graph)
     }
 
+    fn get_repeatable_reads_graph(
+        &mut self,
+        graph: &WriteReadGraph,
+    ) -> Result<RepeatableReadsGraph, ConsistencyViolation> {
+        let mut read_map: RepeatableReadsGraph = graph
+            .reads
+            .iter()
+            .map(|s| vec![FxHashMap::default(); s.len()])
+            .collect();
+        let mut read_values: Vec<Vec<FxHashMap<Key, Value>>> = graph
+            .reads
+            .iter()
+            .map(|s| vec![FxHashMap::default(); s.len()])
+            .collect();
+        for (s_idx, session) in graph.reads.iter().enumerate() {
+            for (t_idx, reads) in session.iter().enumerate() {
+                for &(writer_tid, kv) in reads {
+                    let writers = read_map[s_idx][t_idx].entry(kv.key).or_default();
+                    if writers.len() == 1 && writers[0] != writer_tid {
+                        let violation = ConsistencyViolation::NonRepeatableRead {
+                            reader_tid: TransactionId(s_idx, t_idx),
+                            t1: writer_tid,
+                            t2: writers[0],
+                            r1: kv,
+                            r2: KeyValuePair {
+                                key: kv.key,
+                                value: read_values[s_idx][t_idx][&kv.key],
+                            },
+                        };
+                        self.report.add_violation(violation);
+                        if !R::IS_EXHAUSTIVE {
+                            return Err(violation);
+                        }
+                    }
+                    writers.push(writer_tid);
+                    read_values[s_idx][t_idx].insert(kv.key, kv.value);
+                }
+            }
+        }
+
+        Ok(read_map)
+    }
+
     pub fn check_causal(&mut self) -> R {
         if self.check_intra_transactional().is_err() {
             return mem::take(&mut self.report);
@@ -254,6 +298,9 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
         for (t3_s_idx, sess_reads) in graph.reads.iter().enumerate() {
             let mut last_writes_per_key = FxHashMap::default();
             for (t3_t_idx, t3_reads) in sess_reads.iter().enumerate() {
+                // TODO: Maybe this should be replaced with an index map?
+                let all_writers: FxHashMap<_, _> = t3_reads.iter().copied().collect();
+                let mut prev_writers = FxHashMap::default();
                 for &(t1, kv) in t3_reads {
                     let x = kv.key;
                     let last_writes: &mut Vec<isize> = last_writes_per_key
@@ -286,17 +333,45 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
                             if t2 == t1 {
                                 continue;
                             } else if hb[t2_s_idx][t2_t_idx][t1.0] >= t1.1 as isize {
-                                // TODO: Check how t1, t2 and t2, t3 are HB related
                                 let t3 = TransactionId(t3_s_idx, t3_t_idx);
-                                let violation = ConsistencyViolation::HbConflictCo {
-                                    t1,
-                                    t2,
-                                    t3,
-                                    shadowed_write: KeyValuePair {
-                                        key: kv.key,
-                                        value: t2_value,
-                                    },
-                                    read_x: kv,
+                                let shadowed_write = KeyValuePair {
+                                    key: kv.key,
+                                    value: t2_value,
+                                };
+                                let violation = if let Some(&read_y) = prev_writers.get(&t2) {
+                                    ConsistencyViolation::NonMonoReadHb {
+                                        t1,
+                                        t2,
+                                        t3,
+                                        shadowed_write,
+                                        read_x: kv,
+                                        read_y,
+                                    }
+                                } else if t2_s_idx == t3_s_idx && t2_t_idx < t3_t_idx {
+                                    ConsistencyViolation::FracturedReadHbSo {
+                                        t1,
+                                        t2,
+                                        t3,
+                                        shadowed_write,
+                                        read_x: kv,
+                                    }
+                                } else if let Some(&read_y) = all_writers.get(&t2) {
+                                    ConsistencyViolation::FracturedReadHbWr {
+                                        t1,
+                                        t2,
+                                        t3,
+                                        shadowed_write,
+                                        read_x: kv,
+                                        read_y,
+                                    }
+                                } else {
+                                    ConsistencyViolation::HbConflictCo {
+                                        t1,
+                                        t2,
+                                        t3,
+                                        shadowed_write,
+                                        read_x: kv,
+                                    }
                                 };
                                 self.report.add_violation(violation);
                                 if !R::IS_EXHAUSTIVE {
@@ -306,6 +381,7 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
                             rev_commit_order[t1.0][t1.1].push(t2);
                         }
                     }
+                    prev_writers.insert(t1, kv);
                 }
             }
         }
@@ -331,13 +407,18 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
             return mem::take(&mut self.report);
         };
 
-        let repeatable_reads_graph = match graph.to_repeatable_reads_graph() {
-            Ok(g) => g,
-            Err(violation) => {
-                self.report.add_violation(violation);
-                // TODO: figure out how to continue from here
+        // TODO: Avoid double checking
+        let cycle = graph.dfs(|_| iter::empty(), |_| {}, !R::IS_EXHAUSTIVE);
+        if let Err((t1, t2)) = cycle {
+            self.report
+                .add_violation(ConsistencyViolation::CyclicHb { t1, t2 });
+            if !R::IS_EXHAUSTIVE {
                 return mem::take(&mut self.report);
             }
+        }
+
+        let Ok(repeatable_reads_graph) = self.get_repeatable_reads_graph(&graph) else {
+            return mem::take(&mut self.report);
         };
 
         let history = self.history;
@@ -354,9 +435,10 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
                 let t3_writes = &write_sets[t3_s_idx][t3_t_idx];
                 for &(t1, kv) in t3_writers {
                     if let Some(&t2) = last_writes_per_key.get(&kv.key) {
-                        if t2 != t1 {
-                            rev_commit_order[t1.0][t1.1].push(t2);
+                        if t2 == t1 {
+                            continue;
                         }
+                        rev_commit_order[t1.0][t1.1].push(t2);
                     }
                 }
                 let mut t3_writers = t3_writers.iter().map(|(t2, _)| *t2).collect_vec();
@@ -365,10 +447,11 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
                     for &t1 in intersect_map(
                         &repeatable_reads_graph[t3_s_idx][t3_t_idx],
                         &write_sets[t2.0][t2.1],
-                    ) {
-                        if t1 != t2 {
-                            rev_commit_order[t1.0][t1.1].push(t2);
-                        }
+                    )
+                    .flatten()
+                    .filter(|&&t1| t1 != t2)
+                    {
+                        rev_commit_order[t1.0][t1.1].push(t2);
                     }
                 }
                 for &k in t3_writes {
@@ -399,6 +482,17 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
         let Ok(graph) = self.infer_graph() else {
             return mem::take(&mut self.report);
         };
+
+        // TODO: Avoid double checking
+        let cycle = graph.dfs(|_| iter::empty(), |_| {}, !R::IS_EXHAUSTIVE);
+        if let Err((t1, t2)) = cycle {
+            self.report
+                .add_violation(ConsistencyViolation::CyclicHb { t1, t2 });
+            if !R::IS_EXHAUSTIVE {
+                return mem::take(&mut self.report);
+            }
+        }
+
         let history = self.history;
         let write_sets = history.get_write_sets();
 
@@ -537,7 +631,7 @@ impl Display for Value {
     }
 }
 
-type RepeatableReadsGraph = Vec<Vec<FxHashMap<Key, TransactionId>>>;
+type RepeatableReadsGraph = Vec<Vec<FxHashMap<Key, SmallVec<[TransactionId; 1]>>>>;
 
 #[derive(Debug)]
 struct WriteReadGraph {
@@ -652,44 +746,6 @@ impl WriteReadGraph {
         }
 
         result
-    }
-
-    /// Fails if repeatable reads does not hold
-    fn to_repeatable_reads_graph(&self) -> Result<RepeatableReadsGraph, ConsistencyViolation> {
-        let mut read_map: RepeatableReadsGraph = self
-            .reads
-            .iter()
-            .map(|s| vec![FxHashMap::default(); s.len()])
-            .collect();
-        let mut read_values: Vec<Vec<FxHashMap<Key, Value>>> = self
-            .reads
-            .iter()
-            .map(|s| vec![FxHashMap::default(); s.len()])
-            .collect();
-        for (s_idx, session) in self.reads.iter().enumerate() {
-            for (t_idx, reads) in session.iter().enumerate() {
-                for &(writer_tid, kv) in reads {
-                    if let Some(writer_tid2) = read_map[s_idx][t_idx].insert(kv.key, writer_tid) {
-                        if writer_tid2 != writer_tid {
-                            let violation = ConsistencyViolation::NonRepeatableRead {
-                                reader_tid: TransactionId(s_idx, t_idx),
-                                t1: writer_tid,
-                                t2: writer_tid2,
-                                r1: kv,
-                                r2: KeyValuePair {
-                                    key: kv.key,
-                                    value: read_values[s_idx][t_idx][&kv.key],
-                                },
-                            };
-                            return Err(violation);
-                        }
-                    }
-                    read_values[s_idx][t_idx].insert(kv.key, kv.value);
-                }
-            }
-        }
-
-        Ok(read_map)
     }
 }
 
