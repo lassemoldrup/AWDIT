@@ -335,6 +335,7 @@ impl PartialHistory {
         self.sessions.shuffle(&mut rng);
         History {
             sessions: self.sessions,
+            aborted_writes: FxHashSet::default(),
         }
     }
 
@@ -439,6 +440,7 @@ impl PartialHistory {
         self.sessions.shuffle(&mut rng);
         History {
             sessions: self.sessions,
+            aborted_writes: FxHashSet::default(),
         }
     }
 
@@ -491,6 +493,7 @@ impl PartialHistory {
         self.sessions.shuffle(&mut rng);
         History {
             sessions: self.sessions,
+            aborted_writes: FxHashSet::default(),
         }
     }
 }

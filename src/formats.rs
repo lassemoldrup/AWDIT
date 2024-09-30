@@ -3,7 +3,7 @@ use std::sync::LazyLock;
 use std::{fs, io};
 
 use regex::Regex;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{Event, Key, KeyValuePair, Transaction, Value};
 
@@ -15,9 +15,13 @@ static PLUME_REGEX: LazyLock<Regex> =
 impl History {
     pub fn parse_plume_history(path: impl AsRef<Path>) -> Result<Self, ParseHistoryError> {
         let contents = fs::read_to_string(path)?;
-        let mut history = History { sessions: vec![] };
+        let mut history = History {
+            sessions: vec![],
+            aborted_writes: FxHashSet::default(),
+        };
         let mut session_map = FxHashMap::default();
         let mut transaction_map = FxHashMap::default();
+        let mut keys = FxHashSet::default();
 
         for e in contents.lines() {
             let (_, [op, key, val, sess, txn]) = PLUME_REGEX
@@ -37,15 +41,25 @@ impl History {
                 .parse::<i64>()
                 .map_err(|_| ParseHistoryError::InvalidPlumeFormat)?;
 
+            keys.insert(Key(key));
             let kv = KeyValuePair {
                 key: Key(key),
                 value: Value(val),
             };
+
+            if txn == -1 {
+                if op == "w" {
+                    history.aborted_writes.insert(kv);
+                }
+                continue;
+            }
+
             let event = match op {
                 "r" => Event::Read(kv),
                 "w" => Event::Write(kv),
                 _ => return Err(ParseHistoryError::InvalidPlumeFormat),
             };
+
             let s_idx = *session_map.entry(sess).or_insert_with(|| {
                 history.sessions.push(Vec::new());
                 history.sessions.len() - 1
@@ -57,6 +71,16 @@ impl History {
             history.sessions[s_idx][t_idx].events.push(event);
         }
 
+        // TODO: maybe handle this implicitly?
+        let mut init_transaction = Transaction::new();
+        for key in keys {
+            init_transaction.push(Event::Write(KeyValuePair {
+                key,
+                value: Value(0),
+            }));
+        }
+        history.sessions.push(vec![init_transaction]);
+
         Ok(history)
     }
 }
@@ -67,6 +91,4 @@ pub enum ParseHistoryError {
     Io(#[from] io::Error),
     #[error("File did not match Plume format")]
     InvalidPlumeFormat,
-    #[error("Aborted transactions are currently not supported")]
-    AbortedNotSupported,
 }

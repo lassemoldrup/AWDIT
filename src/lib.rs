@@ -15,6 +15,7 @@ pub mod vector_clock;
 
 pub struct History {
     pub sessions: Vec<Vec<Transaction>>,
+    pub aborted_writes: FxHashSet<KeyValuePair>,
 }
 
 impl History {
@@ -78,17 +79,103 @@ pub struct HistoryChecker<'h, R> {
 }
 
 impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
+    fn check_intra_transactional(&mut self) -> Result<(), ConsistencyViolation> {
+        macro_rules! report_violation {
+            ($violation:expr) => {
+                self.report.add_violation($violation);
+                if !R::IS_EXHAUSTIVE {
+                    return Err($violation);
+                }
+            };
+        }
+
+        for (s_idx, session) in self.history.sessions.iter().enumerate() {
+            for (t_idx, transaction) in session.iter().enumerate() {
+                let tid = TransactionId(s_idx, t_idx);
+                let mut inter_txn_reads = FxHashSet::default();
+                let mut writes = FxHashSet::default();
+                let mut write_map = FxHashMap::default();
+                for event in &transaction.events {
+                    match event {
+                        &Event::Read(kv) => {
+                            if let Some(&w_val) = write_map.get(&kv.key) {
+                                if w_val != kv.value {
+                                    let write_kv = KeyValuePair {
+                                        key: kv.key,
+                                        value: w_val,
+                                    };
+                                    let violation = if writes.contains(&kv) {
+                                        ConsistencyViolation::NotMyLastWrite {
+                                            tid,
+                                            read_event: kv,
+                                            last_write: write_kv,
+                                        }
+                                    } else {
+                                        ConsistencyViolation::NotMyOwnWrite {
+                                            tid,
+                                            read_event: kv,
+                                            own_write: write_kv,
+                                        }
+                                    };
+                                    report_violation!(violation);
+                                }
+                            } else {
+                                inter_txn_reads.insert(kv);
+                            }
+                        }
+                        &Event::Write(kv) => {
+                            if inter_txn_reads.contains(&kv) {
+                                let violation = ConsistencyViolation::FutureRead {
+                                    tid,
+                                    read_event: kv,
+                                };
+                                report_violation!(violation);
+                            }
+                            writes.insert(kv);
+                            write_map.insert(kv.key, kv.value);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     fn infer_graph(&mut self) -> Result<WriteReadGraph, ConsistencyViolation> {
+        macro_rules! report_violation {
+            ($violation:expr) => {
+                self.report.add_violation($violation);
+                if !R::IS_EXHAUSTIVE {
+                    return Err($violation);
+                }
+            };
+        }
+
         let history = self.history;
         let mut value_map = FxHashMap::default();
+        let mut intermediate_writes = FxHashMap::default();
         for (s_idx, session) in history.sessions.iter().enumerate() {
             for (t_idx, transaction) in session.iter().enumerate() {
+                let tid = TransactionId(s_idx, t_idx);
+                let mut txn_writes = FxHashMap::default();
                 for event in &transaction.events {
                     if let &Event::Write(kv) = event {
-                        let tid = TransactionId(s_idx, t_idx);
-                        if value_map.insert(kv, tid).is_some() {
-                            eprintln!("Duplicate writes to {kv}. Using the one in {tid}..");
+                        if let Some(intermediate) = txn_writes.insert(kv.key, kv.value) {
+                            intermediate_writes.insert(
+                                KeyValuePair {
+                                    key: kv.key,
+                                    value: intermediate,
+                                },
+                                tid,
+                            );
                         }
+                    }
+                }
+                for (key, value) in txn_writes {
+                    let kv = KeyValuePair { key, value };
+                    if value_map.insert(kv, tid).is_some() {
+                        eprintln!("Duplicate writes to {kv}. Using the last one..");
                     }
                 }
             }
@@ -106,17 +193,31 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
             for (t_idx, transaction) in session.iter().enumerate() {
                 for event in &transaction.events {
                     if let &Event::Read(kv) = event {
+                        let tid = TransactionId(s_idx, t_idx);
+                        if self.history.aborted_writes.contains(&kv) {
+                            let violation = ConsistencyViolation::AbortedRead { tid, event: kv };
+                            report_violation!(violation);
+                            continue;
+                        }
+
                         if let Some(&writer) = value_map.get(&kv) {
-                            graph.reads[s_idx][t_idx].push((writer, kv));
-                        } else {
-                            let violation = ConsistencyViolation::ThinAirRead {
-                                tid: TransactionId(s_idx, t_idx),
-                                event: kv,
-                            };
-                            self.report.add_violation(violation);
-                            if !R::IS_EXHAUSTIVE {
-                                return Err(violation);
+                            if writer != tid {
+                                graph.reads[s_idx][t_idx].push((writer, kv));
                             }
+                        } else if let Some(&writer) = intermediate_writes.get(&kv) {
+                            if writer != tid {
+                                // if writer == tid, this is NotMyLastWrite
+                                let violation = ConsistencyViolation::IntermediateRead {
+                                    writer_tid: writer,
+                                    reader_tid: tid,
+                                    read_event: kv,
+                                };
+                                report_violation!(violation);
+                                graph.reads[s_idx][t_idx].push((writer, kv));
+                            }
+                        } else {
+                            let violation = ConsistencyViolation::ThinAirRead { tid, event: kv };
+                            report_violation!(violation);
                         }
                     }
                 }
@@ -126,6 +227,9 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
     }
 
     pub fn check_causal(&mut self) -> R {
+        if self.check_intra_transactional().is_err() {
+            return mem::take(&mut self.report);
+        }
         let Ok(graph) = self.infer_graph() else {
             return mem::take(&mut self.report);
         };
@@ -220,6 +324,9 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
     }
 
     pub fn check_read_atomic(&mut self) -> R {
+        if self.check_intra_transactional().is_err() {
+            return mem::take(&mut self.report);
+        }
         let Ok(graph) = self.infer_graph() else {
             return mem::take(&mut self.report);
         };
@@ -286,6 +393,9 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
     }
 
     pub fn check_read_committed(&mut self) -> R {
+        if self.check_intra_transactional().is_err() {
+            return mem::take(&mut self.report);
+        }
         let Ok(graph) = self.infer_graph() else {
             return mem::take(&mut self.report);
         };
@@ -658,21 +768,19 @@ pub enum ConsistencyViolation {
         tid: TransactionId,
         event: KeyValuePair,
     },
-    #[error("Transaction {reader_tid} reads {read_event} from aborted {aborted_tid}")]
+    #[error("Transaction {tid} reads aborted {event}")]
     AbortedRead {
-        aborted_tid: TransactionId,
-        reader_tid: TransactionId,
-        read_event: KeyValuePair,
+        tid: TransactionId,
+        event: KeyValuePair,
     },
-    #[error("Transaction {tid} reads {read_event} from the future")]
+    #[error("Transaction {tid} reads {read_event} from later in the same transaction")]
     FutureRead {
         tid: TransactionId,
         read_event: KeyValuePair,
     },
-    #[error("Transaction {reader_tid} reads {read_event} from {writer_tid} instead of own write {own_write}")]
+    #[error("Transaction {tid} reads {read_event} instead of own write {own_write}")]
     NotMyOwnWrite {
-        writer_tid: TransactionId,
-        reader_tid: TransactionId,
+        tid: TransactionId,
         read_event: KeyValuePair,
         own_write: KeyValuePair,
     },
@@ -682,12 +790,11 @@ pub enum ConsistencyViolation {
         read_event: KeyValuePair,
         last_write: KeyValuePair,
     },
-    #[error("Transaction {reader_tid} reads {read_event} from {writer_tid} instead of last write {last_write}")]
+    #[error("Transaction {reader_tid} reads intermediate {read_event} from {writer_tid} instead of last write")]
     IntermediateRead {
         writer_tid: TransactionId,
         reader_tid: TransactionId,
         read_event: KeyValuePair,
-        last_write: KeyValuePair,
     },
     #[error("Transactions {t1} and {t2} causally depend on each other")]
     CyclicHb {
@@ -783,6 +890,7 @@ pub enum ConsistencyViolation {
 mod tests {
     use std::fs;
 
+    use rustc_hash::FxHashSet;
     use test_generator::test_resources;
 
     use crate::{
@@ -826,7 +934,10 @@ mod tests {
             }
             sessions.push(transactions);
         }
-        History { sessions }
+        History {
+            sessions,
+            aborted_writes: FxHashSet::default(),
+        }
     }
 
     #[test_resources("res/tests/causal/**/*.txt")]
