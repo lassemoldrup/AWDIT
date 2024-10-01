@@ -1,4 +1,5 @@
 use std::cmp::Ordering;
+use std::collections::VecDeque;
 use std::fmt::{self, Display, Formatter};
 use std::{iter, mem};
 
@@ -544,6 +545,54 @@ impl Display for History {
         }
         Ok(())
     }
+}
+
+struct PartialCommitOrder {
+    rev_order: Vec<Vec<Vec<CommitOrderEdge>>>,
+}
+
+impl PartialCommitOrder {
+    fn new(shape: &History) -> Self {
+        Self {
+            rev_order: shape
+                .sessions
+                .iter()
+                .map(|s| vec![Vec::new(); s.len()])
+                .collect(),
+        }
+    }
+
+    fn add_edge(
+        &mut self,
+        t1: TransactionId,
+        t2: TransactionId,
+        t3: TransactionId,
+        x: KeyValuePair,
+    ) {
+        self.rev_order[t1.0][t1.1].push(CommitOrderEdge { t2, t3, x });
+    }
+
+    fn find_cycle<R: ConsistencyReport>(&self, graph: &WriteReadGraph, report: &mut R) {
+        let mut visited: Vec<_> = graph.reads.iter().map(|s| vec![false; s.len()]).collect();
+        let mut parent = graph.reads.iter().map(|s| vec![None; s.len()]).collect();
+        for (s_idx, session) in graph.reads.iter().enumerate() {
+            let t_idx = session.len() - 1;
+            if visited[s_idx][t_idx] {
+                continue;
+            }
+
+            let mut queue = VecDeque::from([TransactionId(s_idx, t_idx)]);
+
+            while let Some(tid) = queue.pop_front() {}
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct CommitOrderEdge {
+    t2: TransactionId,
+    t3: TransactionId,
+    x: KeyValuePair,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
