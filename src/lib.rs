@@ -6,7 +6,7 @@ use std::{iter, mem};
 use itertools::Itertools;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
-use util::{intersect_map, GetTwoMut};
+use util::{intersect_map, Captures, GetTwoMut};
 use vector_clock::VectorClock;
 
 pub mod fenwick;
@@ -310,7 +310,7 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
                     for (t2_s_idx, last_write) in last_writes.iter_mut().enumerate() {
                         let Ok(last_pred) = usize::try_from(hb[t3_s_idx][t3_t_idx][t2_s_idx])
                         else {
-                            // If -1, no predecessors in t2_s_idx
+                            // If -1, no predecessors in t2's session
                             continue;
                         };
                         // Find the last write to x in t2's session that is less than or equal to last_pred
@@ -572,18 +572,76 @@ impl PartialCommitOrder {
         self.rev_order[t1.0][t1.1].push(CommitOrderEdge { t2, t3, x });
     }
 
-    fn find_cycle<R: ConsistencyReport>(&self, graph: &WriteReadGraph, report: &mut R) {
-        let mut visited: Vec<_> = graph.reads.iter().map(|s| vec![false; s.len()]).collect();
-        let mut parent = graph.reads.iter().map(|s| vec![None; s.len()]).collect();
+    fn find_cycles<R: ConsistencyReport>(&self, graph: &WriteReadGraph, report: &mut R) {
+        let mut state: Vec<_> = graph
+            .reads
+            .iter()
+            .map(|s| vec![TarjanState::default(); s.len()])
+            .collect();
+        let mut next_index = 0;
+        let mut stack = Vec::new();
         for (s_idx, session) in graph.reads.iter().enumerate() {
             let t_idx = session.len() - 1;
-            if visited[s_idx][t_idx] {
+            if state[s_idx][t_idx].index != usize::MAX {
                 continue;
             }
+            tarjan_visit(
+                TransactionId(s_idx, t_idx),
+                graph,
+                &mut state,
+                &mut next_index,
+                &mut stack,
+            );
+        }
+    }
+}
 
-            let mut queue = VecDeque::from([TransactionId(s_idx, t_idx)]);
+fn tarjan_visit(
+    tid: TransactionId,
+    graph: &WriteReadGraph,
+    state: &mut Vec<Vec<TarjanState>>,
+    next_index: &mut usize,
+    stack: &mut Vec<TransactionId>,
+) {
+    let node_state = &mut state[tid.0][tid.1];
+    node_state.index = *next_index;
+    node_state.low_link = *next_index;
+    *next_index += 1;
+    stack.push(tid);
+    node_state.on_stack = true;
 
-            while let Some(tid) = queue.pop_front() {}
+    let index = node_state.index;
+    let mut low_link = node_state.low_link;
+
+    for tid2 in graph.rev_hb_edges(tid) {
+        let tid2_node_state = state[tid2.0][tid2.1];
+        if tid2_node_state.index == usize::MAX {
+            tarjan_visit(tid2, graph, state, next_index, stack);
+            low_link = low_link.min(state[tid2.0][tid2.1].low_link);
+        } else if tid2_node_state.on_stack {
+            low_link = low_link.min(tid2_node_state.low_link);
+        }
+    }
+
+    state[tid.0][tid.1].low_link = low_link;
+    if index == low_link {
+        // TODO: pop from stack until tid
+    }
+}
+
+#[derive(Clone, Copy)]
+struct TarjanState {
+    index: usize,
+    low_link: usize,
+    on_stack: bool,
+}
+
+impl Default for TarjanState {
+    fn default() -> Self {
+        Self {
+            index: usize::MAX,
+            low_link: usize::MAX,
+            on_stack: false,
         }
     }
 }
@@ -758,14 +816,8 @@ impl WriteReadGraph {
                         search_state[s_idx][t_idx] = SearchState::Marked;
                         stack.push(DfsStackEntry::Post(tid));
 
-                        let session_pred = t_idx
-                            .checked_sub(1)
-                            .map(|t_idx| TransactionId(s_idx, t_idx))
-                            .into_iter();
-                        let reads = self.reads[s_idx][t_idx].iter().map(|(writer, _)| *writer);
-
                         for TransactionId(s_idx, t_idx) in
-                            session_pred.chain(reads).chain(additional_rev_edges(tid))
+                            self.rev_hb_edges(tid).chain(additional_rev_edges(tid))
                         {
                             match search_state[s_idx][t_idx] {
                                 SearchState::NotSeen => {
@@ -795,6 +847,18 @@ impl WriteReadGraph {
         }
 
         result
+    }
+
+    fn rev_hb_edges(
+        &self,
+        TransactionId(s_idx, t_idx): TransactionId,
+    ) -> impl Iterator<Item = TransactionId> + Captures<'_> {
+        let session_pred = t_idx
+            .checked_sub(1)
+            .map(|t_idx| TransactionId(s_idx, t_idx))
+            .into_iter();
+        let reads = self.reads[s_idx][t_idx].iter().map(|(writer, _)| *writer);
+        session_pred.chain(reads)
     }
 }
 
