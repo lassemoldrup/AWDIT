@@ -403,7 +403,7 @@ impl PartialHistory {
 
                             // If there is a writer writing something in the considered write set,
                             // and that writer is earlier in the co order, that is inconsistent
-                            for (conflicting_tid, _) in
+                            for (_, (conflicting_tid, _)) in
                                 intersect_map(&read_map, &write_sets[write_tid.0][write_tid.1])
                             {
                                 if self.rev_commit_order[conflicting_tid] < write_co_idx {

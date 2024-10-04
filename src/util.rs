@@ -33,15 +33,18 @@ impl<'a, T: ?Sized> Captures<'a> for T {}
 pub fn intersect_map<'m, 's, K, V, H>(
     map: &'m HashMap<K, V, H>,
     set: &'s HashSet<K, H>,
-) -> impl Iterator<Item = &'m V> + Captures<'s>
+) -> impl Iterator<Item = (&'m K, &'m V)> + Captures<'s>
 where
     K: Hash + Eq,
     H: BuildHasher,
 {
     if map.len() <= set.len() {
-        Either::Left(map.iter().filter_map(|(k, v)| set.contains(k).then_some(v)))
+        Either::Left(
+            map.iter()
+                .filter_map(|(k, v)| set.contains(k).then_some((k, v))),
+        )
     } else {
-        Either::Right(set.iter().filter_map(|k| map.get(k)))
+        Either::Right(set.iter().filter_map(|k| map.get_key_value(k)))
     }
     .into_iter()
 }

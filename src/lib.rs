@@ -1,7 +1,8 @@
 use std::cmp::Ordering;
+use std::collections::hash_map::Entry;
 use std::collections::VecDeque;
-use std::fmt::{self, Display, Formatter};
-use std::{iter, mem};
+use std::fmt::{self, Display, Formatter, Write};
+use std::mem;
 
 use itertools::Itertools;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -50,7 +51,7 @@ impl History {
         write_sets
     }
 
-    fn get_writes_per_key(&self) -> FxHashMap<Key, Vec<Vec<(usize, Value)>>> {
+    fn get_writes_per_key(&self) -> FxHashMap<Key, Vec<Vec<usize>>> {
         let mut writes = FxHashMap::default();
         for (s_idx, session) in self.sessions.iter().enumerate() {
             for (t_idx, transaction) in session.iter().enumerate() {
@@ -61,17 +62,28 @@ impl History {
                     let session_writes = &mut writes
                         .entry(kv.key)
                         .or_insert_with(|| vec![Vec::new(); self.sessions.len()])[s_idx];
-                    if let Some(&(t2_idx, _)) = session_writes.last() {
+                    if let Some(&t2_idx) = session_writes.last() {
                         if t2_idx == t_idx {
                             // Multiple writes in the same transaction to the same location
                             continue;
                         }
                     }
-                    session_writes.push((t_idx, kv.value));
+                    session_writes.push(t_idx);
                 }
             }
         }
         writes
+    }
+
+    fn get_po_min_max_map(&self, tid: TransactionId) -> FxHashMap<KeyValuePair, (usize, usize)> {
+        let mut map = FxHashMap::default();
+        for (po_idx, &event) in self.sessions[tid.0][tid.1].events.iter().enumerate() {
+            if let Event::Read(kv) = event {
+                let (_, max) = map.entry(kv).or_insert((po_idx, po_idx));
+                *max = po_idx;
+            }
+        }
+        map
     }
 }
 
@@ -84,7 +96,7 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
     fn check_intra_transactional(&mut self) -> Result<(), ConsistencyViolation> {
         macro_rules! report_violation {
             ($violation:expr) => {
-                self.report.add_violation($violation);
+                self.report.add_violation($violation.clone());
                 if !R::IS_EXHAUSTIVE {
                     return Err($violation);
                 }
@@ -147,7 +159,7 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
     fn infer_graph(&mut self) -> Result<WriteReadGraph, ConsistencyViolation> {
         macro_rules! report_violation {
             ($violation:expr) => {
-                self.report.add_violation($violation);
+                self.report.add_violation($violation.clone());
                 if !R::IS_EXHAUSTIVE {
                     return Err($violation);
                 }
@@ -237,33 +249,32 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
             .iter()
             .map(|s| vec![FxHashMap::default(); s.len()])
             .collect();
-        let mut read_values: Vec<Vec<FxHashMap<Key, Value>>> = graph
-            .reads
-            .iter()
-            .map(|s| vec![FxHashMap::default(); s.len()])
-            .collect();
         for (s_idx, session) in graph.reads.iter().enumerate() {
             for (t_idx, reads) in session.iter().enumerate() {
                 for &(writer_tid, kv) in reads {
                     let writers = read_map[s_idx][t_idx].entry(kv.key).or_default();
-                    if writers.len() == 1 && writers[0] != writer_tid {
-                        let violation = ConsistencyViolation::NonRepeatableRead {
-                            reader_tid: TransactionId(s_idx, t_idx),
-                            t1: writer_tid,
-                            t2: writers[0],
-                            r1: kv,
-                            r2: KeyValuePair {
-                                key: kv.key,
-                                value: read_values[s_idx][t_idx][&kv.key],
-                            },
-                        };
-                        self.report.add_violation(violation);
-                        if !R::IS_EXHAUSTIVE {
-                            return Err(violation);
+                    if writers.len() == 1 {
+                        if writers[0].0 == writer_tid {
+                            continue;
+                        } else {
+                            let (t2, r2_val) = writers[0];
+                            let violation = ConsistencyViolation::NonRepeatableRead {
+                                reader_tid: TransactionId(s_idx, t_idx),
+                                t1: writer_tid,
+                                t2,
+                                r1: kv,
+                                r2: KeyValuePair {
+                                    key: kv.key,
+                                    value: r2_val,
+                                },
+                            };
+                            self.report.add_violation(violation.clone());
+                            if !R::IS_EXHAUSTIVE {
+                                return Err(violation);
+                            }
                         }
                     }
-                    writers.push(writer_tid);
-                    read_values[s_idx][t_idx].insert(kv.key, kv.value);
+                    writers.push((writer_tid, kv.value));
                 }
             }
         }
@@ -279,11 +290,11 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
             return mem::take(&mut self.report);
         };
 
-        let (hb, result) = graph.compute_hb(!R::IS_EXHAUSTIVE);
-        if let Err((t1, t2)) = result {
-            self.report
-                .add_violation(ConsistencyViolation::CyclicHb { t1, t2 });
-            if !R::IS_EXHAUSTIVE {
+        let hb = match graph.compute_hb() {
+            Ok(hb) => hb,
+            Err(cycle) => {
+                self.report
+                    .add_violation(ConsistencyViolation::Cycle(cycle));
                 return mem::take(&mut self.report);
             }
         };
@@ -291,21 +302,15 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
         let history = self.history;
         let writes_per_key = history.get_writes_per_key();
 
-        let mut rev_commit_order: Vec<_> = history
-            .sessions
-            .iter()
-            .map(|s| vec![Vec::new(); s.len()])
-            .collect();
+        let mut commit_order = PartialCommitOrder::new(&history);
         for (t3_s_idx, sess_reads) in graph.reads.iter().enumerate() {
             let mut last_writes_per_key = FxHashMap::default();
             for (t3_t_idx, t3_reads) in sess_reads.iter().enumerate() {
-                // TODO: Maybe this should be replaced with an index map?
-                let all_writers: FxHashMap<_, _> = t3_reads.iter().copied().collect();
+                let t3_read_map = to_read_map(t3_reads);
                 let mut prev_writers = FxHashMap::default();
                 for &(t1, kv) in t3_reads {
-                    let x = kv.key;
                     let last_writes: &mut Vec<isize> = last_writes_per_key
-                        .entry(x)
+                        .entry(kv.key)
                         .or_insert_with(|| vec![-1; history.sessions.len()]);
                     for (t2_s_idx, last_write) in last_writes.iter_mut().enumerate() {
                         let Ok(last_pred) = usize::try_from(hb[t3_s_idx][t3_t_idx][t2_s_idx])
@@ -314,10 +319,10 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
                             continue;
                         };
                         // Find the last write to x in t2's session that is less than or equal to last_pred
-                        let writes = &writes_per_key[&x][t2_s_idx];
+                        let writes = &writes_per_key[&kv.key][t2_s_idx];
                         // TOOD: Test binary search
                         for write_idx in 0.max(*last_write)..writes.len() as isize {
-                            match writes[write_idx as usize].0.cmp(&last_pred) {
+                            match writes[write_idx as usize].cmp(&last_pred) {
                                 Ordering::Less => *last_write = write_idx,
                                 Ordering::Equal => {
                                     *last_write = write_idx;
@@ -329,57 +334,42 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
                             }
                         }
                         if *last_write >= 0 {
-                            let (t2_t_idx, t2_value) = writes[*last_write as usize];
+                            let t2_t_idx = writes[*last_write as usize];
                             let t2 = TransactionId(t2_s_idx, t2_t_idx);
                             if t2 == t1 {
                                 continue;
-                            } else if hb[t2_s_idx][t2_t_idx][t1.0] >= t1.1 as isize {
-                                let t3 = TransactionId(t3_s_idx, t3_t_idx);
-                                let shadowed_write = KeyValuePair {
-                                    key: kv.key,
-                                    value: t2_value,
-                                };
-                                let violation = if let Some(&read_y) = prev_writers.get(&t2) {
-                                    ConsistencyViolation::NonMonoReadHb {
-                                        t1,
-                                        t2,
-                                        t3,
-                                        shadowed_write,
-                                        read_x: kv,
-                                        read_y,
-                                    }
-                                } else if t2_s_idx == t3_s_idx && t2_t_idx < t3_t_idx {
-                                    ConsistencyViolation::FracturedReadHbSo {
-                                        t1,
-                                        t2,
-                                        t3,
-                                        shadowed_write,
-                                        read_x: kv,
-                                    }
-                                } else if let Some(&read_y) = all_writers.get(&t2) {
-                                    ConsistencyViolation::FracturedReadHbWr {
-                                        t1,
-                                        t2,
-                                        t3,
-                                        shadowed_write,
-                                        read_x: kv,
-                                        read_y,
-                                    }
-                                } else {
-                                    ConsistencyViolation::HbConflictCo {
-                                        t1,
-                                        t2,
-                                        t3,
-                                        shadowed_write,
-                                        read_x: kv,
-                                    }
-                                };
-                                self.report.add_violation(violation);
-                                if !R::IS_EXHAUSTIVE {
-                                    return mem::take(&mut self.report);
-                                }
                             }
-                            rev_commit_order[t1.0][t1.1].push(t2);
+                            // TODO: break out early?
+                            // else if hb[t2_s_idx][t2_t_idx][t1.0] >= t1.1 as isize {
+                            // }
+                            let t3 = TransactionId(t3_s_idx, t3_t_idx);
+                            if let Some(&read_y) = prev_writers.get(&t2) {
+                                commit_order.add_edge(
+                                    t1,
+                                    t2,
+                                    t3,
+                                    kv,
+                                    CoJustificationKind::NonMonotonic(read_y),
+                                );
+                            } else if t2_s_idx == t3_s_idx && t2_t_idx < t3_t_idx {
+                                commit_order.add_edge(
+                                    t1,
+                                    t2,
+                                    t3,
+                                    kv,
+                                    CoJustificationKind::FracturedSo,
+                                );
+                            } else if let Some(read_ys) = t3_read_map.get(&t2) {
+                                commit_order.add_edge(
+                                    t1,
+                                    t2,
+                                    t3,
+                                    kv,
+                                    CoJustificationKind::FracturedWr(read_ys[0]),
+                                );
+                            } else {
+                                commit_order.add_edge(t1, t2, t3, kv, CoJustificationKind::Causal);
+                            }
                         }
                     }
                     prev_writers.insert(t1, kv);
@@ -388,15 +378,7 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
         }
 
         // Check for cycles in the reverse commit order
-        let cycle = graph.dfs(
-            |TransactionId(s_idx, t_idx)| rev_commit_order[s_idx][t_idx].iter().copied(),
-            |_| {},
-            false,
-        );
-        if let Err((t1, t2)) = cycle {
-            self.report
-                .add_violation(ConsistencyViolation::Placeholder { t1, t2 });
-        }
+        commit_order.find_cycles(&graph, &mut self.report);
         mem::take(&mut self.report)
     }
 
@@ -408,16 +390,6 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
             return mem::take(&mut self.report);
         };
 
-        // TODO: Avoid double checking
-        let cycle = graph.dfs(|_| iter::empty(), |_| {}, !R::IS_EXHAUSTIVE);
-        if let Err((t1, t2)) = cycle {
-            self.report
-                .add_violation(ConsistencyViolation::CyclicHb { t1, t2 });
-            if !R::IS_EXHAUSTIVE {
-                return mem::take(&mut self.report);
-            }
-        }
-
         let Ok(repeatable_reads_graph) = self.get_repeatable_reads_graph(&graph) else {
             return mem::take(&mut self.report);
         };
@@ -425,54 +397,63 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
         let history = self.history;
         let write_sets = history.get_write_sets();
 
-        let mut rev_commit_order: Vec<_> = history
-            .sessions
-            .iter()
-            .map(|s| vec![Vec::new(); s.len()])
-            .collect();
+        let mut commit_order = PartialCommitOrder::new(&history);
         for (t3_s_idx, sess_reads) in graph.reads.iter().enumerate() {
             let mut last_writes_per_key = FxHashMap::default();
             for (t3_t_idx, t3_writers) in sess_reads.iter().enumerate() {
+                let t3 = TransactionId(t3_s_idx, t3_t_idx);
                 let t3_writes = &write_sets[t3_s_idx][t3_t_idx];
+                let t3_read_map = to_read_map(t3_writers);
                 for &(t1, kv) in t3_writers {
                     if let Some(&t2) = last_writes_per_key.get(&kv.key) {
-                        if t2 == t1 {
+                        if t2 == t1 || t3_read_map.contains_key(&t2) {
+                            // If we read from t2, we handle it as a read, to know if it is non-monotonic or fractured
                             continue;
                         }
-                        rev_commit_order[t1.0][t1.1].push(t2);
+                        commit_order.add_edge(t1, t2, t3, kv, CoJustificationKind::FracturedSo);
                     }
                 }
-                let mut t3_writers = t3_writers.iter().map(|(t2, _)| *t2).collect_vec();
-                t3_writers.sort();
-                for t2 in t3_writers.into_iter().dedup() {
-                    for &t1 in intersect_map(
+
+                let po_min_max_map = history.get_po_min_max_map(t3);
+                for (t2, t2_reads) in t3_read_map.into_iter() {
+                    for (kv, t1) in intersect_map(
                         &repeatable_reads_graph[t3_s_idx][t3_t_idx],
                         &write_sets[t2.0][t2.1],
                     )
-                    .flatten()
-                    .filter(|&&t1| t1 != t2)
+                    .flat_map(|(&x, t1s)| {
+                        t1s.iter()
+                            .map(move |&(t1, value)| (KeyValuePair { key: x, value }, t1))
+                    })
+                    .filter(|&(_, t1)| t1 != t2)
                     {
-                        rev_commit_order[t1.0][t1.1].push(t2);
+                        let read_y = t2_reads[0];
+                        if po_min_max_map[&read_y].0 < po_min_max_map[&kv].1 {
+                            commit_order.add_edge(
+                                t1,
+                                t2,
+                                t3,
+                                kv,
+                                CoJustificationKind::NonMonotonic(read_y),
+                            );
+                        } else {
+                            commit_order.add_edge(
+                                t1,
+                                t2,
+                                t3,
+                                kv,
+                                CoJustificationKind::FracturedWr(read_y),
+                            );
+                        }
                     }
                 }
                 for &k in t3_writes {
-                    last_writes_per_key
-                        .entry(k)
-                        .or_insert(TransactionId(t3_s_idx, t3_t_idx));
+                    last_writes_per_key.insert(k, t3);
                 }
             }
         }
 
         // Check for cycles in the reverse commit order
-        let cycle = graph.dfs(
-            |TransactionId(s_idx, t_idx)| rev_commit_order[s_idx][t_idx].iter().copied(),
-            |_| {},
-            false,
-        );
-        if let Err((t1, t2)) = cycle {
-            self.report
-                .add_violation(ConsistencyViolation::Placeholder { t1, t2 });
-        }
+        commit_order.find_cycles(&graph, &mut self.report);
         mem::take(&mut self.report)
     }
 
@@ -484,48 +465,50 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
             return mem::take(&mut self.report);
         };
 
-        // TODO: Avoid double checking
-        let cycle = graph.dfs(|_| iter::empty(), |_| {}, !R::IS_EXHAUSTIVE);
-        if let Err((t1, t2)) = cycle {
-            self.report
-                .add_violation(ConsistencyViolation::CyclicHb { t1, t2 });
-            if !R::IS_EXHAUSTIVE {
-                return mem::take(&mut self.report);
-            }
-        }
-
         let history = self.history;
+        eprintln!("{history}");
         let write_sets = history.get_write_sets();
 
-        let mut rev_commit_order: Vec<_> = history
-            .sessions
-            .iter()
-            .map(|s| vec![Vec::new(); s.len()])
-            .collect();
-        for t3_writers in graph.reads.iter().flatten() {
-            let mut earliest_writer_per_loc: FxHashMap<Key, TransactionId> = FxHashMap::default();
-            for &(t2, kv) in t3_writers.iter().rev() {
-                for &t1 in intersect_map(&earliest_writer_per_loc, &write_sets[t2.0][t2.1]) {
-                    if t1 != t2 {
-                        rev_commit_order[t1.0][t1.1].push(t2);
+        let mut commit_order = PartialCommitOrder::new(&history);
+        for (t3_s_idx, session) in graph.reads.iter().enumerate() {
+            for (t3_t_idx, t3_writers) in session.iter().enumerate() {
+                let mut earliest_writer_per_loc: FxHashMap<Key, (TransactionId, Value)> =
+                    FxHashMap::default();
+                for &(t2, kv) in t3_writers.iter().rev() {
+                    for (&x, &(t1, value)) in
+                        intersect_map(&earliest_writer_per_loc, &write_sets[t2.0][t2.1])
+                    {
+                        if t1 != t2 {
+                            let t3 = TransactionId(t3_s_idx, t3_t_idx);
+                            let kv_x = KeyValuePair { key: x, value };
+                            commit_order.add_edge(
+                                t1,
+                                t2,
+                                t3,
+                                kv_x,
+                                CoJustificationKind::NonMonotonic(kv),
+                            );
+                        }
                     }
+                    earliest_writer_per_loc.insert(kv.key, (t2, kv.value));
                 }
-                earliest_writer_per_loc.insert(kv.key, t2);
             }
         }
 
         // Check for cycles in the reverse commit order
-        let cycle = graph.dfs(
-            |TransactionId(s_idx, t_idx)| rev_commit_order[s_idx][t_idx].iter().copied(),
-            |_| {},
-            false,
-        );
-        if let Err((t1, t2)) = cycle {
-            self.report
-                .add_violation(ConsistencyViolation::Placeholder { t1, t2 });
-        }
+        commit_order.find_cycles(&graph, &mut self.report);
         mem::take(&mut self.report)
     }
+}
+
+fn to_read_map(
+    reads: &[(TransactionId, KeyValuePair)],
+) -> FxHashMap<TransactionId, Vec<KeyValuePair>> {
+    let mut map: FxHashMap<_, Vec<_>> = FxHashMap::default();
+    for &(tid, kv) in reads {
+        map.entry(tid).or_default().push(kv);
+    }
+    map
 }
 
 impl Display for History {
@@ -548,7 +531,7 @@ impl Display for History {
 }
 
 struct PartialCommitOrder {
-    rev_order: Vec<Vec<Vec<CommitOrderEdge>>>,
+    rev_order: Vec<Vec<Vec<(TransactionId, CoJustification)>>>,
 }
 
 impl PartialCommitOrder {
@@ -568,8 +551,9 @@ impl PartialCommitOrder {
         t2: TransactionId,
         t3: TransactionId,
         x: KeyValuePair,
+        kind: CoJustificationKind,
     ) {
-        self.rev_order[t1.0][t1.1].push(CommitOrderEdge { t2, t3, x });
+        self.rev_order[t1.0][t1.1].push((t2, CoJustification { t3, kv: x, kind }));
     }
 
     fn find_cycles<R: ConsistencyReport>(&self, graph: &WriteReadGraph, report: &mut R) {
@@ -585,47 +569,107 @@ impl PartialCommitOrder {
             if state[s_idx][t_idx].index != usize::MAX {
                 continue;
             }
-            tarjan_visit(
+            self.tarjan_visit(
                 TransactionId(s_idx, t_idx),
                 graph,
                 &mut state,
                 &mut next_index,
                 &mut stack,
+                report,
             );
         }
     }
-}
 
-fn tarjan_visit(
-    tid: TransactionId,
-    graph: &WriteReadGraph,
-    state: &mut Vec<Vec<TarjanState>>,
-    next_index: &mut usize,
-    stack: &mut Vec<TransactionId>,
-) {
-    let node_state = &mut state[tid.0][tid.1];
-    node_state.index = *next_index;
-    node_state.low_link = *next_index;
-    *next_index += 1;
-    stack.push(tid);
-    node_state.on_stack = true;
+    fn tarjan_visit<R: ConsistencyReport>(
+        &self,
+        tid: TransactionId,
+        graph: &WriteReadGraph,
+        state: &mut Vec<Vec<TarjanState>>,
+        next_index: &mut usize,
+        stack: &mut Vec<TransactionId>,
+        report: &mut R,
+    ) {
+        let node_state = &mut state[tid.0][tid.1];
+        node_state.index = *next_index;
+        node_state.low_link = *next_index;
+        *next_index += 1;
+        stack.push(tid);
+        node_state.on_stack = true;
 
-    let index = node_state.index;
-    let mut low_link = node_state.low_link;
+        let index = node_state.index;
+        let mut low_link = node_state.low_link;
 
-    for tid2 in graph.rev_hb_edges(tid) {
-        let tid2_node_state = state[tid2.0][tid2.1];
-        if tid2_node_state.index == usize::MAX {
-            tarjan_visit(tid2, graph, state, next_index, stack);
-            low_link = low_link.min(state[tid2.0][tid2.1].low_link);
-        } else if tid2_node_state.on_stack {
-            low_link = low_link.min(tid2_node_state.low_link);
+        for (tid2, _) in self.rev_neighbours(tid, graph) {
+            let tid2_node_state = state[tid2.0][tid2.1];
+            if tid2_node_state.index == usize::MAX {
+                self.tarjan_visit(tid2, graph, state, next_index, stack, report);
+                low_link = low_link.min(state[tid2.0][tid2.1].low_link);
+            } else if tid2_node_state.on_stack {
+                low_link = low_link.min(tid2_node_state.low_link);
+            }
+        }
+
+        state[tid.0][tid.1].low_link = low_link;
+        if index == state[tid.0][tid.1].low_link {
+            let rev_idx = stack
+                .iter()
+                .rev()
+                .position(|&t| t == tid)
+                .expect("tid should be in stack");
+            if rev_idx == 0 {
+                // Singleton SCC
+                stack.pop();
+                state[tid.0][tid.1].on_stack = false;
+                return;
+            }
+            let scc_start = stack.len() - rev_idx - 1;
+            self.report_scc(&stack[scc_start..], graph, report);
+            for &tid2 in &stack[scc_start..] {
+                state[tid2.0][tid2.1].on_stack = false;
+            }
+            stack.truncate(scc_start);
         }
     }
 
-    state[tid.0][tid.1].low_link = low_link;
-    if index == low_link {
-        // TODO: pop from stack until tid
+    fn rev_neighbours<'g>(
+        &self,
+        tid: TransactionId,
+        graph: &'g WriteReadGraph,
+    ) -> impl Iterator<Item = (TransactionId, Option<CoJustification>)> + Captures<'_> + Captures<'g>
+    {
+        graph.rev_hb_edges(tid).map(|t| (t, None)).chain(
+            self.rev_order[tid.0][tid.1]
+                .iter()
+                .map(|&(t, j)| (t, Some(j))),
+        )
+    }
+
+    fn report_scc<R: ConsistencyReport>(
+        &self,
+        scc: &[TransactionId],
+        graph: &WriteReadGraph,
+        report: &mut R,
+    ) {
+        let root = scc[0];
+        let scc_set: FxHashSet<_> = scc.iter().copied().collect();
+        let mut visited = FxHashSet::default();
+        let mut parent = FxHashMap::default();
+        let mut queue = VecDeque::from([root]);
+        'queue_loop: while let Some(tid) = queue.pop_front() {
+            for (tid2, just) in self.rev_neighbours(tid, graph) {
+                if !scc_set.contains(&tid2) || !visited.insert(tid2) {
+                    continue;
+                }
+                parent.insert(tid2, (tid, just));
+                if tid2 == root {
+                    break 'queue_loop;
+                }
+                queue.push_back(tid2);
+            }
+        }
+
+        let cycle = graph.build_cycle(root, |tid| parent[&tid]);
+        report.add_violation(ConsistencyViolation::Cycle(cycle));
     }
 }
 
@@ -646,11 +690,77 @@ impl Default for TarjanState {
     }
 }
 
-#[derive(Clone, Copy)]
-struct CommitOrderEdge {
-    t2: TransactionId,
+#[derive(Clone, Copy, Debug)]
+struct CoJustification {
     t3: TransactionId,
-    x: KeyValuePair,
+    kv: KeyValuePair,
+    kind: CoJustificationKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CoJustificationKind {
+    NonMonotonic(KeyValuePair),
+    FracturedSo,
+    FracturedWr(KeyValuePair),
+    Causal,
+}
+
+impl PartialOrd for CoJustificationKind {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        if self == other {
+            return Some(Ordering::Equal);
+        }
+        match (self, other) {
+            (CoJustificationKind::NonMonotonic(_), CoJustificationKind::NonMonotonic(_)) => None,
+            (CoJustificationKind::NonMonotonic(_), _) => Some(Ordering::Less),
+            (
+                CoJustificationKind::FracturedSo | CoJustificationKind::FracturedWr(_),
+                CoJustificationKind::NonMonotonic(_),
+            ) => Some(Ordering::Greater),
+            (
+                CoJustificationKind::FracturedSo | CoJustificationKind::FracturedWr(_),
+                CoJustificationKind::FracturedSo | CoJustificationKind::FracturedWr(_),
+            ) => None,
+            (
+                CoJustificationKind::FracturedSo | CoJustificationKind::FracturedWr(_),
+                CoJustificationKind::Causal,
+            ) => Some(Ordering::Less),
+            (CoJustificationKind::Causal, _) => Some(Ordering::Greater),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum EdgeType {
+    Session,
+    WriteRead,
+    CommitOrder(CoJustification),
+}
+
+impl EdgeType {
+    fn from_justification(
+        t1: TransactionId,
+        t2: TransactionId,
+        just: Option<CoJustification>,
+    ) -> Self {
+        if t1.0 == t2.0 && t2.1 > t1.1 {
+            Self::Session
+        } else if let Some(just) = just {
+            Self::CommitOrder(just)
+        } else {
+            Self::WriteRead
+        }
+    }
+}
+
+impl Display for EdgeType {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self {
+            EdgeType::Session => write!(f, "SO"),
+            EdgeType::WriteRead => write!(f, "WR"),
+            EdgeType::CommitOrder(_) => write!(f, "CO"),
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -738,7 +848,7 @@ impl Display for Value {
     }
 }
 
-type RepeatableReadsGraph = Vec<Vec<FxHashMap<Key, SmallVec<[TransactionId; 1]>>>>;
+type RepeatableReadsGraph = Vec<Vec<FxHashMap<Key, SmallVec<[(TransactionId, Value); 1]>>>>;
 
 #[derive(Debug)]
 struct WriteReadGraph {
@@ -746,58 +856,40 @@ struct WriteReadGraph {
 }
 
 impl WriteReadGraph {
-    fn compute_hb(
-        &self,
-        stop_on_cycle: bool,
-    ) -> (
-        Vec<Vec<VectorClock>>,
-        Result<(), (TransactionId, TransactionId)>,
-    ) {
+    fn compute_hb(&self) -> Result<Vec<Vec<VectorClock>>, ViolatingCycle> {
         let mut hb: Vec<Vec<VectorClock>> = self
             .reads
             .iter()
             .map(|s| vec![VectorClock::new_min(self.reads.len()); s.len()])
             .collect();
 
-        let acyclic = self.dfs(
-            |_| iter::empty(),
-            |TransactionId(s_idx, t_idx)| {
-                if t_idx != 0 {
-                    let (pred, succ) = hb[s_idx].get_two_mut(t_idx - 1, t_idx);
-                    succ.join(pred);
-                    succ.join1(s_idx, t_idx as isize - 1);
+        self.dfs(|TransactionId(s_idx, t_idx)| {
+            if t_idx != 0 {
+                let (pred, succ) = hb[s_idx].get_two_mut(t_idx - 1, t_idx);
+                succ.join(pred);
+                succ.join1(s_idx, t_idx as isize - 1);
+            }
+            for (writer, _) in &self.reads[s_idx][t_idx] {
+                if writer.0 == s_idx {
+                    // Already covered by session predecessor
+                    continue;
                 }
-                for (writer, _) in &self.reads[s_idx][t_idx] {
-                    if writer.0 == s_idx {
-                        // Already covered by session predecessor
-                        continue;
-                    }
-                    let (pred_sess, succ_sess) = hb.get_two_mut(writer.0, s_idx);
-                    succ_sess[t_idx].join(&pred_sess[writer.1]);
-                    succ_sess[t_idx].join1(writer.0, writer.1 as isize);
-                }
-            },
-            stop_on_cycle,
-        );
+                let (pred_sess, succ_sess) = hb.get_two_mut(writer.0, s_idx);
+                succ_sess[t_idx].join(&pred_sess[writer.1]);
+                succ_sess[t_idx].join1(writer.0, writer.1 as isize);
+            }
+        })?;
 
-        (hb, acyclic)
+        Ok(hb)
     }
 
-    fn dfs<I>(
-        &self,
-        additional_rev_edges: impl Fn(TransactionId) -> I,
-        mut post_action: impl FnMut(TransactionId),
-        stop_on_cycle: bool,
-    ) -> Result<(), (TransactionId, TransactionId)>
-    where
-        I: IntoIterator<Item = TransactionId>,
-    {
-        let mut result = Ok(());
+    fn dfs(&self, mut post_action: impl FnMut(TransactionId)) -> Result<(), ViolatingCycle> {
         let mut search_state: Vec<_> = self
             .reads
             .iter()
             .map(|s| vec![SearchState::NotSeen; s.len()])
             .collect();
+        let mut parent: Vec<_> = self.reads.iter().map(|s| vec![None; s.len()]).collect();
         // Iterate edges backwards to get a forward top order
         for (s_idx, session) in self.reads.iter().enumerate() {
             let t_idx = session.len() - 1;
@@ -809,28 +901,20 @@ impl WriteReadGraph {
             while let Some(entry) = stack.pop() {
                 match entry {
                     DfsStackEntry::Pre(tid @ TransactionId(s_idx, t_idx)) => {
-                        if search_state[s_idx][t_idx] == SearchState::Marked {
-                            // There were two parallel edges to this node
-                            continue;
-                        }
                         search_state[s_idx][t_idx] = SearchState::Marked;
                         stack.push(DfsStackEntry::Post(tid));
 
-                        for TransactionId(s_idx, t_idx) in
-                            self.rev_hb_edges(tid).chain(additional_rev_edges(tid))
-                        {
-                            match search_state[s_idx][t_idx] {
+                        for tid2 in self.rev_hb_edges(tid) {
+                            match search_state[tid2.0][tid2.1] {
                                 SearchState::NotSeen => {
-                                    stack.push(DfsStackEntry::Pre(TransactionId(s_idx, t_idx)));
+                                    stack.push(DfsStackEntry::Pre(tid2));
+                                    parent[tid2.0][tid2.1] = Some(tid);
                                 }
                                 SearchState::Marked => {
                                     // Cycle detected
-                                    let cycle = Err((tid, TransactionId(s_idx, t_idx)));
-                                    if stop_on_cycle {
-                                        return cycle;
-                                    } else {
-                                        result = cycle;
-                                    }
+                                    parent[tid2.0][tid2.1] = Some(tid);
+                                    return Err(self
+                                        .build_cycle(tid2, |t| (parent[t.0][t.1].unwrap(), None)));
                                 }
                                 SearchState::Seen => {
                                     continue;
@@ -846,7 +930,56 @@ impl WriteReadGraph {
             }
         }
 
-        result
+        Ok(())
+    }
+
+    fn build_cycle(
+        &self,
+        root: TransactionId,
+        parent: impl Fn(TransactionId) -> (TransactionId, Option<CoJustification>),
+    ) -> ViolatingCycle {
+        let mut cycle = vec![root];
+        let mut edges = vec![];
+        // If we ever go from (s, t) to (s, t + d), we can remove all in-between steps
+        let mut index_in_session: FxHashMap<_, _> = [(root.0, (root.1, 1))].into_iter().collect();
+        let mut prev = root;
+        let (mut next, mut just) = parent(root);
+        loop {
+            if next == root {
+                cycle.push(root);
+                edges.push(EdgeType::from_justification(prev, next, just));
+                break;
+            }
+
+            match index_in_session.entry(next.0) {
+                Entry::Occupied(e) => {
+                    let (t_idx, len) = e.get();
+                    assert_ne!(next.1, *t_idx);
+                    if next.1 > *t_idx {
+                        // Compact
+                        cycle.truncate(*len);
+                        edges.truncate(*len - 1);
+                    } else {
+                        // Shorter cycle found
+                        cycle = cycle.split_off(*len - 1);
+                        cycle.push(next);
+                        cycle.push(TransactionId(next.0, *t_idx));
+                        edges = edges.split_off(*len - 1);
+                        edges.push(EdgeType::from_justification(prev, next, just));
+                        edges.push(EdgeType::Session);
+                        break;
+                    }
+                }
+                Entry::Vacant(e) => {
+                    e.insert((next.1, cycle.len() + 1));
+                }
+            }
+            cycle.push(next);
+            edges.push(EdgeType::from_justification(prev, next, just));
+            prev = next;
+            (next, just) = parent(next);
+        }
+        ViolatingCycle { cycle, edges }
     }
 
     fn rev_hb_edges(
@@ -857,7 +990,12 @@ impl WriteReadGraph {
             .checked_sub(1)
             .map(|t_idx| TransactionId(s_idx, t_idx))
             .into_iter();
-        let reads = self.reads[s_idx][t_idx].iter().map(|(writer, _)| *writer);
+        let reads = self.reads[s_idx][t_idx]
+            .iter()
+            .map(|(writer, _)| *writer)
+            // Get rid of parallel edges
+            .filter(move |t| t.0 != s_idx || t.1 + 1 != t_idx)
+            .dedup();
         session_pred.chain(reads)
     }
 }
@@ -879,7 +1017,7 @@ impl Default for WeakestViolationReport {
 
 impl Display for WeakestViolationReport {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        match self.0 {
+        match &self.0 {
             Ok(_) => writeln!(f, "Consistent."),
             Err(violation) => {
                 writeln!(f, "Inconsistent:")?;
@@ -930,7 +1068,7 @@ impl ConsistencyReport for FullViolationReport {
     }
 }
 
-#[derive(thiserror::Error, Debug, Clone, Copy)]
+#[derive(thiserror::Error, Debug, Clone)]
 pub enum ConsistencyViolation {
     #[error("Transaction {tid} reads {event} out of thin air")]
     ThinAirRead {
@@ -965,29 +1103,6 @@ pub enum ConsistencyViolation {
         reader_tid: TransactionId,
         read_event: KeyValuePair,
     },
-    #[error("Transactions {t1} and {t2} causally depend on each other")]
-    CyclicHb {
-        t1: TransactionId,
-        t2: TransactionId,
-    },
-    #[error("Non-monotonic read (HB): Transaction {t1} causes {t2}, and {t3} reads {read_x} from {t1} instead of {shadowed_write} from {t2}, from which it had read {read_y} earlier")]
-    NonMonoReadHb {
-        t1: TransactionId,
-        t2: TransactionId,
-        t3: TransactionId,
-        shadowed_write: KeyValuePair,
-        read_x: KeyValuePair,
-        read_y: KeyValuePair,
-    },
-    #[error("Non-monotonic read (CO): Transaction {t1} commits before {t2}, and {t3} reads {read_x} from {t1} instead of {shadowed_write} from {t2}, from which it had read {read_y} earlier")]
-    NonMonoReadCo {
-        t1: TransactionId,
-        t2: TransactionId,
-        t3: TransactionId,
-        shadowed_write: KeyValuePair,
-        read_x: KeyValuePair,
-        read_y: KeyValuePair,
-    },
     #[error(
         "Non-repeatable read: Transaction {reader_tid} reads {r1} from {t1} and {r2} from {t2}"
     )]
@@ -998,61 +1113,84 @@ pub enum ConsistencyViolation {
         r1: KeyValuePair,
         r2: KeyValuePair,
     },
-    #[error("Fractured read (HB): Transaction {t1} causes {t2}, and {t3} reads {read_x} from {t1} instead of {shadowed_write} from {t2}, which is in the same session")]
-    FracturedReadHbSo {
-        t1: TransactionId,
-        t2: TransactionId,
-        t3: TransactionId,
-        shadowed_write: KeyValuePair,
-        read_x: KeyValuePair,
-    },
-    #[error("Fractured read (HB): Transaction {t1} causes {t2}, and {t3} reads {read_x} from {t1} instead of {shadowed_write} from {t2}, from which it reads {read_y}")]
-    FracturedReadHbWr {
-        t1: TransactionId,
-        t2: TransactionId,
-        t3: TransactionId,
-        shadowed_write: KeyValuePair,
-        read_x: KeyValuePair,
-        read_y: KeyValuePair,
-    },
-    #[error("Fractured read (CO): Transaction {t1} commits before {t2}, and {t3} reads {read_x} from {t1} instead of {shadowed_write} from {t2}, which is in the same session")]
-    FracturedReadCoSo {
-        t1: TransactionId,
-        t2: TransactionId,
-        t3: TransactionId,
-        shadowed_write: KeyValuePair,
-        read_x: KeyValuePair,
-    },
-    #[error("Fractured read (CO): Transaction {t1} commits before {t2}, and {t3} reads {read_x} from {t1} instead of {shadowed_write} from {t2}, from which it reads {read_y}")]
-    FracturedReadCoWr {
-        t1: TransactionId,
-        t2: TransactionId,
-        t3: TransactionId,
-        shadowed_write: KeyValuePair,
-        read_x: KeyValuePair,
-        read_y: KeyValuePair,
-    },
-    #[error("Transaction {t1} causes {t2}, and {t3} reads {read_x} from {t1} instead of {shadowed_write} from its causal predecessor {t2}")]
-    HbConflictCo {
-        t1: TransactionId,
-        t2: TransactionId,
-        t3: TransactionId,
-        shadowed_write: KeyValuePair,
-        read_x: KeyValuePair,
-    },
-    #[error("Transaction {t1} commits before {t2}, and {t3} reads {read_x} from {t1} instead of {shadowed_write} from its causal predecessor {t2}")]
-    ConflictCo {
-        t1: TransactionId,
-        t2: TransactionId,
-        t3: TransactionId,
-        shadowed_write: KeyValuePair,
-        read_x: KeyValuePair,
-    },
-    #[error("Cycle in CO: {t1} <-> {t2}")]
-    Placeholder {
-        t1: TransactionId,
-        t2: TransactionId,
-    },
+    #[error("{0}")]
+    Cycle(ViolatingCycle),
+}
+
+#[derive(Clone, Debug)]
+pub struct ViolatingCycle {
+    cycle: Vec<TransactionId>,
+    edges: Vec<EdgeType>,
+}
+
+impl Display for ViolatingCycle {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        let mut co_kind = None;
+        let mut cycle_str = String::new();
+        let mut justification_str = String::new();
+        for (i, (&tid, &edge)) in self.cycle.iter().zip(&self.edges).enumerate() {
+            write!(&mut cycle_str, "{tid} -> ").unwrap();
+            let next = self.cycle[i + 1];
+            if let EdgeType::CommitOrder(just) = edge {
+                let worst = co_kind.get_or_insert(just.kind);
+                if just.kind < *worst {
+                    *worst = just.kind;
+                }
+                write!(&mut justification_str, "{tid} -> {next}: Inferred CO: ").unwrap();
+                write!(
+                    &mut justification_str,
+                    "{} reads {} from {next}",
+                    just.t3, just.kv,
+                )
+                .unwrap();
+                match just.kind {
+                    CoJustificationKind::NonMonotonic(kv) => {
+                        writeln!(
+                            &mut justification_str,
+                            " after it reads {kv} from {tid}, which also writes {}",
+                            just.kv.key
+                        )
+                        .unwrap();
+                    }
+                    CoJustificationKind::FracturedSo => writeln!(
+                        &mut justification_str,
+                        " later in the same session as {tid}, which also writes {}",
+                        just.kv.key
+                    )
+                    .unwrap(),
+                    CoJustificationKind::FracturedWr(kv) => writeln!(
+                        &mut justification_str,
+                        " as well as {kv} from {tid}, which also writes {}",
+                        just.kv.key
+                    )
+                    .unwrap(),
+                    CoJustificationKind::Causal => writeln!(
+                        &mut justification_str,
+                        " and happens after {tid}, which also writes {}",
+                        just.kv.key
+                    )
+                    .unwrap(),
+                }
+            } else {
+                writeln!(&mut justification_str, "{tid} -> {next}: {edge}").unwrap();
+            }
+        }
+        writeln!(cycle_str, "{}", self.cycle[0]).unwrap();
+
+        if let Some(co_kind) = co_kind {
+            match co_kind {
+                CoJustificationKind::NonMonotonic(_) => write!(f, "Non-monotonic read(s): ")?,
+                CoJustificationKind::FracturedSo | CoJustificationKind::FracturedWr(_) => {
+                    write!(f, "Fractured read(s): ")?;
+                }
+                CoJustificationKind::Causal => write!(f, "Causally inconsistent read(s): ")?,
+            }
+        } else {
+            write!(f, "HB cycle: ")?;
+        }
+        writeln!(f, "{cycle_str}")?;
+        write!(f, "{justification_str}")
+    }
 }
 
 #[cfg(test)]
