@@ -28,7 +28,7 @@ enum Command {
         isolation: IsolationLevel,
         #[arg(required = true)]
         path: PathBuf,
-        #[clap(short, long, default_value_t = ReportMode::Weakest)]
+        #[clap(short, long, default_value_t = ReportMode::Full)]
         report_mode: ReportMode,
     },
 }
