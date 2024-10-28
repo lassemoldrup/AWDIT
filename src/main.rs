@@ -28,6 +28,8 @@ enum Command {
         isolation: IsolationLevel,
         #[arg(required = true)]
         path: PathBuf,
+        #[clap(short, long, default_value_t = HistoryFormat::Plume)]
+        format: HistoryFormat,
         #[clap(short, long, default_value_t = ReportMode::Full)]
         report_mode: ReportMode,
     },
@@ -69,6 +71,13 @@ enum IsolationLevel {
     ReadCommitted,
     ReadAtomic,
     Causal,
+}
+
+#[derive(Clone, ValueEnum, strum::EnumString, strum::Display)]
+#[strum(serialize_all = "kebab-case")]
+enum HistoryFormat {
+    Plume,
+    Cobra,
 }
 
 #[derive(Clone, ValueEnum, strum::EnumString, strum::Display)]
@@ -514,11 +523,17 @@ fn main() -> anyhow::Result<()> {
         Command::Check {
             isolation,
             path,
+            format,
             report_mode,
         } => {
             let parsing_start = Instant::now();
-            let history = History::parse_plume_history(path)
-                .context("Failed to parse path as Plume history")?;
+            let history = match format {
+                HistoryFormat::Plume => History::parse_plume_history(path)
+                    .context("Failed to parse path as Plume history")?,
+                HistoryFormat::Cobra => History::parse_cobra_history(path)
+                    .context("Failed to parse path as Cobra history")?,
+            };
+
             let parsing_elapsed = parsing_start.elapsed();
             println!("Done parsing: {}ms", parsing_elapsed.as_millis());
 

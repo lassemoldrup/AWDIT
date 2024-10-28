@@ -6,7 +6,7 @@ use std::{fs, io};
 use regex::Regex;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::{Event, Key, KeyValuePair, Transaction, TransactionId, Value};
+use crate::{Event, Key, KeyValuePair, Transaction, Value};
 
 use super::History;
 
@@ -91,7 +91,8 @@ impl History {
             sessions: vec![],
             aborted_writes: FxHashSet::default(),
         };
-        let mut txn_id_map = FxHashMap::default();
+        let mut keys = FxHashSet::default();
+
         for log_file in fs::read_dir(path)? {
             let file_path = log_file?.path();
             if file_path.extension().and_then(|e| e.to_str()) != Some("log") {
@@ -130,24 +131,77 @@ impl History {
                             return Err(ParseHistoryError::InvalidCobraFormat);
                         }
 
-                        txn_id_map.insert(
-                            cur_txn_id,
-                            TransactionId(history.sessions.len(), session.len()),
-                        );
                         session.push(cur_txn);
                     }
                     b'A' => {
                         // There shouldn't be any aborted transactions in the log
                         return Err(ParseHistoryError::InvalidCobraFormat);
                     }
-                    b'W' => {}
-                    b'R' => {}
+                    b'W' => {
+                        let Some(cur_txn) = &mut cur_txn else {
+                            return Err(ParseHistoryError::InvalidCobraFormat);
+                        };
+
+                        let mut buf = [0; 8];
+                        reader.read_exact(&mut buf)?;
+                        let wid = i64::from_be_bytes(buf);
+                        reader.read_exact(&mut buf)?;
+                        let key_hash = i64::from_be_bytes(buf);
+                        reader.read_exact(&mut buf)?;
+                        // TODO: use this for anything?
+                        let _val_hash = i64::from_be_bytes(buf);
+
+                        cur_txn.push(Event::Write(KeyValuePair {
+                            key: Key(key_hash as usize),
+                            value: Value(wid as usize),
+                        }));
+                    }
+                    b'R' => {
+                        let Some(cur_txn) = &mut cur_txn else {
+                            return Err(ParseHistoryError::InvalidCobraFormat);
+                        };
+
+                        let mut buf = [0; 8];
+                        reader.read_exact(&mut buf)?;
+                        // TODO: use this for anything?
+                        let _prev_txnid = i64::from_be_bytes(buf);
+                        reader.read_exact(&mut buf)?;
+                        let mut wid = i64::from_be_bytes(buf);
+                        reader.read_exact(&mut buf)?;
+                        let key_hash = i64::from_be_bytes(buf);
+                        reader.read_exact(&mut buf)?;
+                        // TODO: use this for anything?
+                        let _val_hash = i64::from_be_bytes(buf);
+
+                        let key = Key(key_hash as usize);
+                        keys.insert(key);
+
+                        // Null reads are treated as init reads
+                        if wid == 0xdeadbeef || wid == 0xbebeebee {
+                            wid = 0;
+                        }
+
+                        cur_txn.push(Event::Read(KeyValuePair {
+                            key: Key(key_hash as usize),
+                            value: Value(wid as usize),
+                        }));
+                    }
                     _ => return Err(ParseHistoryError::InvalidCobraFormat),
                 }
             }
 
             history.sessions.push(session);
         }
+
+        // TODO: maybe handle this implicitly?
+        let mut init_transaction = Transaction::new();
+        for &key in &keys {
+            init_transaction.push(Event::Write(KeyValuePair {
+                key,
+                value: Value(0),
+            }));
+        }
+        history.sessions.push(vec![init_transaction]);
 
         if history.sessions.is_empty() {
             return Err(ParseHistoryError::InvalidCobraFormat);
