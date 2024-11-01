@@ -1,7 +1,15 @@
+use std::fmt::{self, Display, Formatter};
 use std::fs::File;
-use std::io::{BufReader, Read};
-use std::path::Path;
+use std::io::{BufReader, Read, Write};
+use std::path::{Path, PathBuf};
 use std::{fs, io};
+
+#[cfg(feature = "dbcop")]
+use dbcop::db::history::Event as DbCopEvent;
+#[cfg(feature = "dbcop")]
+pub use dbcop::db::history::History as DbCopHistory;
+#[cfg(feature = "dbcop")]
+use dbcop::db::history::Transaction as DbCopTransaction;
 
 use regex::Regex;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -16,7 +24,21 @@ thread_local! {
 
 impl History {
     pub fn parse_plume_history(path: impl AsRef<Path>) -> Result<Self, ParseHistoryError> {
-        let contents = fs::read_to_string(path)?;
+        if !path.as_ref().metadata()?.is_dir() {
+            return Err(ParseHistoryError::NotADirectory(
+                path.as_ref().to_path_buf(),
+            ));
+        }
+
+        let files: Result<Vec<_>, _> = path.as_ref().read_dir()?.collect();
+        let files = files?;
+        if files.len() != 1 {
+            return Err(ParseHistoryError::NotAPlumeDirectory(
+                path.as_ref().to_path_buf(),
+            ));
+        }
+
+        let contents = fs::read_to_string(files[0].path())?;
         let mut history = History {
             sessions: vec![],
             aborted_writes: FxHashSet::default(),
@@ -86,7 +108,20 @@ impl History {
         Ok(history)
     }
 
+    pub fn serialize_plume_history(&self, path: impl AsRef<Path>) -> Result<(), io::Error> {
+        let file_path = path.as_ref().join("history.txt");
+        fs::create_dir_all(path)?;
+        let mut writer = File::create(file_path)?;
+        write!(&mut writer, "{}", PlumeHistoryDisplay { history: self })
+    }
+
     pub fn parse_cobra_history(path: impl AsRef<Path>) -> Result<Self, ParseHistoryError> {
+        if !path.as_ref().metadata()?.is_dir() {
+            return Err(ParseHistoryError::NotADirectory(
+                path.as_ref().to_path_buf(),
+            ));
+        }
+
         let mut history = History {
             sessions: vec![],
             aborted_writes: FxHashSet::default(),
@@ -176,6 +211,10 @@ impl History {
                         let key = Key(key_hash as usize);
                         keys.insert(key);
 
+                        if key.0 == 13296660918851520211 {
+                            dbg!(_prev_txnid, wid, key_hash, _val_hash);
+                        }
+
                         // Null reads are treated as init reads
                         if wid == 0xdeadbeef || wid == 0xbebeebee {
                             wid = 0;
@@ -209,14 +248,177 @@ impl History {
 
         Ok(history)
     }
+
+    #[cfg(feature = "dbcop")]
+    pub fn parse_dbcop_history(path: impl AsRef<Path>) -> Result<Self, ParseHistoryError> {
+        if !path.as_ref().metadata()?.is_dir() {
+            return Err(ParseHistoryError::NotADirectory(
+                path.as_ref().to_path_buf(),
+            ));
+        }
+
+        let file_path = path.as_ref().join("history.bincode");
+        let reader = BufReader::new(File::open(file_path)?);
+        let history: DbCopHistory =
+            bincode::deserialize_from(reader).map_err(|_| ParseHistoryError::InvalidDbCopFormat)?;
+        Ok(Self::from_dbcop_history(&history))
+    }
+
+    #[cfg(feature = "dbcop")]
+    pub fn from_dbcop_history(history: &DbCopHistory) -> Self {
+        let dbcop_sessions = history.get_data();
+        let mut sessions = Vec::with_capacity(dbcop_sessions.len());
+        let mut aborted_writes = FxHashSet::default();
+        for dbcop_session in dbcop_sessions {
+            let mut session = Vec::with_capacity(dbcop_session.len());
+            for dbcop_txn in dbcop_session {
+                let mut txn = Transaction::new();
+                for event in &dbcop_txn.events {
+                    let kv = KeyValuePair {
+                        key: Key(event.variable),
+                        value: Value(event.value),
+                    };
+                    if event.write {
+                        if !event.success {
+                            aborted_writes.insert(kv);
+                            continue;
+                        }
+                        txn.push(Event::Write(kv));
+                    } else {
+                        if !event.success {
+                            continue;
+                        }
+                        txn.push(Event::Read(kv));
+                    }
+                }
+                session.push(txn);
+            }
+            sessions.push(session);
+        }
+        History {
+            sessions,
+            aborted_writes,
+        }
+    }
+
+    #[cfg(feature = "dbcop")]
+    pub fn serialize_dbcop_history(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> Result<(), SerializeDbCopHistoryError> {
+        let dbcop_history = self.to_dbcop_history();
+        let file_path = path.as_ref().join("history.bincode");
+        fs::create_dir_all(path)?;
+        let writer = File::create(file_path)?;
+        bincode::serialize_into(writer, &dbcop_history).map_err(Into::into)
+    }
+
+    #[cfg(feature = "dbcop")]
+    pub fn to_dbcop_history(&self) -> DbCopHistory {
+        let mut dbcop_sessions = Vec::with_capacity(self.sessions.len() + 1);
+        for session in &self.sessions {
+            let mut dbcop_session = Vec::with_capacity(session.len());
+            for txn in session {
+                let mut dbcop_txn = DbCopTransaction {
+                    events: Vec::with_capacity(txn.events.len()),
+                    success: true,
+                };
+
+                for event in &txn.events {
+                    let (variable, value) = match event {
+                        Event::Read(kv) => (kv.key.0, kv.value.0),
+                        Event::Write(kv) => (kv.key.0, kv.value.0),
+                    };
+                    dbcop_txn.events.push(dbcop::db::history::Event {
+                        variable,
+                        value,
+                        write: matches!(event, Event::Write(_)),
+                        success: true,
+                    });
+                }
+                dbcop_session.push(dbcop_txn);
+            }
+            dbcop_sessions.push(dbcop_session);
+        }
+
+        if !self.aborted_writes.is_empty() {
+            let mut dbcop_txn = DbCopTransaction {
+                events: Vec::with_capacity(self.aborted_writes.len()),
+                success: false,
+            };
+            for &kv in &self.aborted_writes {
+                dbcop_txn.events.push(DbCopEvent {
+                    variable: kv.key.0,
+                    value: kv.value.0,
+                    write: true,
+                    success: false,
+                });
+            }
+            dbcop_sessions.push(vec![dbcop_txn]);
+        }
+
+        DbCopHistory::new(
+            self.stats().to_hist_params(),
+            "converted".into(),
+            chrono::Local::now(),
+            chrono::Local::now(),
+            dbcop_sessions,
+        )
+    }
+}
+
+struct PlumeHistoryDisplay<'h> {
+    history: &'h History,
+}
+
+impl Display for PlumeHistoryDisplay<'_> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        for aborted in &self.history.aborted_writes {
+            writeln!(f, "w({},{},0,-1)", aborted.key, aborted.value)?;
+        }
+        let mut t_idx = 0;
+        for (s_idx, session) in self.history.sessions.iter().enumerate() {
+            for txn in session {
+                for event in &txn.events {
+                    match event {
+                        Event::Read(kv) => {
+                            writeln!(f, "r({},{},{},{})", kv.key, kv.value, s_idx, t_idx)?
+                        }
+                        Event::Write(kv) => {
+                            writeln!(f, "w({},{},{},{})", kv.key, kv.value, s_idx, t_idx)?
+                        }
+                    }
+                }
+                t_idx += 1;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(thiserror::Error, Debug)]
 pub enum ParseHistoryError {
     #[error("{0}")]
     Io(#[from] io::Error),
+    #[error("{0} is not a directory")]
+    NotADirectory(PathBuf),
+    #[error("{0} is not a single-file directory with a .txt file")]
+    NotAPlumeDirectory(PathBuf),
     #[error("File did not match Plume format")]
     InvalidPlumeFormat,
     #[error("File did not match Cobra format")]
     InvalidCobraFormat,
+    #[cfg(feature = "dbcop")]
+    #[error("File did not match DBCop format")]
+    InvalidDbCopFormat,
+}
+
+#[cfg(feature = "dbcop")]
+#[derive(thiserror::Error, Debug)]
+pub enum SerializeDbCopHistoryError {
+    #[error("{0}")]
+    Io(#[from] io::Error),
+    #[error("{0}")]
+    Bincode(#[from] bincode::Error),
 }

@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+use std::thread;
 use std::time::Instant;
 
 use anyhow::Context;
@@ -33,6 +34,19 @@ enum Command {
         #[clap(short, long, default_value_t = ReportMode::Full)]
         report_mode: ReportMode,
     },
+    // Convert a Plume/Cobra/DBCop history to a Plume/DBCop history
+    Convert {
+        #[arg(required = true)]
+        from_path: PathBuf,
+        #[arg(required = true)]
+        to_path: PathBuf,
+        #[clap(short = 's', long, default_value_t = false)]
+        no_strip_init: bool,
+        #[clap(short, long, default_value_t = HistoryFormat::Cobra)]
+        from_format: HistoryFormat,
+        #[clap(short, long, default_value_t = HistoryFormat::Plume)]
+        to_format: HistoryFormat,
+    },
 }
 
 #[derive(Args)]
@@ -65,7 +79,7 @@ impl GenerateArgs {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, ValueEnum, strum::EnumString, strum::Display)]
+#[derive(Clone, PartialEq, Eq, ValueEnum, strum::Display)]
 #[strum(serialize_all = "kebab-case")]
 enum IsolationLevel {
     ReadCommitted,
@@ -73,14 +87,17 @@ enum IsolationLevel {
     Causal,
 }
 
-#[derive(Clone, ValueEnum, strum::EnumString, strum::Display)]
+#[derive(Clone, strum::EnumString, strum::Display)]
 #[strum(serialize_all = "kebab-case")]
 enum HistoryFormat {
     Plume,
     Cobra,
+    #[cfg(feature = "dbcop")]
+    #[strum(serialize = "dbcop")]
+    DbCop,
 }
 
-#[derive(Clone, ValueEnum, strum::EnumString, strum::Display)]
+#[derive(Clone, ValueEnum, strum::Display)]
 #[strum(serialize_all = "kebab-case")]
 enum ReportMode {
     Weakest,
@@ -532,6 +549,9 @@ fn main() -> anyhow::Result<()> {
                     .context("Failed to parse path as Plume history")?,
                 HistoryFormat::Cobra => History::parse_cobra_history(path)
                     .context("Failed to parse path as Cobra history")?,
+                #[cfg(feature = "dbcop")]
+                HistoryFormat::DbCop => History::parse_dbcop_history(path)
+                    .context("Failed to parse path as Cobra history")?,
             };
 
             let parsing_elapsed = parsing_start.elapsed();
@@ -547,13 +567,53 @@ fn main() -> anyhow::Result<()> {
                     }
                 }};
             }
+
             let checking_start = Instant::now();
-            match report_mode {
-                ReportMode::Weakest => println!("{}", check_history!(WeakestViolationReport)),
-                ReportMode::Full => println!("{}", check_history!(FullViolationReport)),
-            }
+            // Spawn a new thread to avoid stack overflow for big histories
+            thread::scope(|scope| {
+                thread::Builder::new()
+                    .stack_size(32 * 1024 * 1024)
+                    .spawn_scoped(scope, || match report_mode {
+                        ReportMode::Weakest => {
+                            println!("{}", check_history!(WeakestViolationReport))
+                        }
+                        ReportMode::Full => println!("{}", check_history!(FullViolationReport)),
+                    })
+                    .unwrap();
+            });
             let checking_elapsed = checking_start.elapsed();
             println!("Done checking: {}ms", checking_elapsed.as_millis());
+        }
+        Command::Convert {
+            from_path,
+            to_path,
+            no_strip_init,
+            from_format,
+            to_format,
+        } => {
+            let mut history = match from_format {
+                HistoryFormat::Plume => History::parse_plume_history(&from_path)
+                    .context("Failed to parse path as Plume history")?,
+                HistoryFormat::Cobra => History::parse_cobra_history(&from_path)
+                    .context("Failed to parse path as Cobra history")?,
+                #[cfg(feature = "dbcop")]
+                HistoryFormat::DbCop => History::parse_dbcop_history(&from_path)
+                    .context("Failed to parse path as Cobra history")?,
+            };
+            if !no_strip_init {
+                history.sessions.pop();
+            }
+
+            match to_format {
+                HistoryFormat::Plume => history
+                    .serialize_plume_history(&to_path)
+                    .context("Failed to write Plume history")?,
+                HistoryFormat::Cobra => panic!("Cannot convert to Cobra history"),
+                #[cfg(feature = "dbcop")]
+                HistoryFormat::DbCop => history
+                    .serialize_dbcop_history(&to_path)
+                    .context("Failed to write DBCop history")?,
+            }
         }
     }
     Ok(())

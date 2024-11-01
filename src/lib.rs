@@ -4,6 +4,9 @@ use std::collections::VecDeque;
 use std::fmt::{self, Display, Formatter, Write};
 use std::mem;
 
+#[cfg(feature = "dbcop")]
+use dbcop::db::history::HistParams;
+
 use itertools::Itertools;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
@@ -26,6 +29,25 @@ impl History {
         HistoryChecker {
             report: R::default(),
             history: self,
+        }
+    }
+
+    pub fn stats(&self) -> HistoryStats {
+        HistoryStats {
+            num_sessions: self.sessions.len(),
+            num_transactions: self.sessions.iter().map(|s| s.len()).sum(),
+            num_events: self
+                .sessions
+                .iter()
+                .flat_map(|s| s.iter().map(|t| t.events.len()))
+                .sum(),
+            num_keys: self
+                .sessions
+                .iter()
+                .flat_map(|s| s.iter().flat_map(|t| t.events.iter()))
+                .map(|e| e.key())
+                .unique()
+                .count(),
         }
     }
 
@@ -84,6 +106,26 @@ impl History {
             }
         }
         map
+    }
+}
+
+pub struct HistoryStats {
+    pub num_sessions: usize,
+    pub num_transactions: usize,
+    pub num_events: usize,
+    pub num_keys: usize,
+}
+
+impl HistoryStats {
+    #[cfg(feature = "dbcop")]
+    pub fn to_hist_params(&self) -> HistParams {
+        HistParams {
+            id: 0,
+            n_node: 1,
+            n_variable: self.num_keys,
+            n_transaction: self.num_transactions,
+            n_event: self.num_events,
+        }
     }
 }
 
@@ -466,7 +508,6 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
         };
 
         let history = self.history;
-        eprintln!("{history}");
         let write_sets = history.get_write_sets();
 
         let mut commit_order = PartialCommitOrder::new(&history);
@@ -775,7 +816,7 @@ enum DfsStackEntry {
     Post(TransactionId),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Transaction {
     pub events: Vec<Event>,
 }
@@ -807,6 +848,26 @@ impl Display for TransactionId {
 pub enum Event {
     Read(KeyValuePair),
     Write(KeyValuePair),
+}
+
+impl Event {
+    pub fn key(&self) -> Key {
+        match self {
+            Event::Read(kv) | Event::Write(kv) => kv.key,
+        }
+    }
+
+    pub fn value(&self) -> Value {
+        match self {
+            Event::Read(kv) | Event::Write(kv) => kv.value,
+        }
+    }
+
+    pub fn kv(&self) -> KeyValuePair {
+        match self {
+            Event::Read(kv) | Event::Write(kv) => *kv,
+        }
+    }
 }
 
 impl Display for Event {
