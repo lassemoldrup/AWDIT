@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<!DOCTYPE benchmark PUBLIC "+//IDN sosy-lab.org//DTD BenchExec benchmark 2.3//EN" "https://www.sosy-lab.org/benchexec/benchmark-2.3.dtd">
+
+<benchmark tool="ours"
+    displayName="Our tool"
+    timelimit="10 min"
+    hardtimelimit="11 min"
+    memlimit="48 GB">
+
+    <!-- <rundefinition> defines tool configurations to benchmark. -->
+    <rundefinition name="causal">
+        <option name="--isolation">causal</option>
+    </rundefinition>
+
+    <rundefinition name="read-atomic">
+        <option name="--isolation">read-atomic</option>
+    </rundefinition>
+
+    <rundefinition name="read-committed">
+        <option name="--isolation">read-committed</option>
+    </rundefinition>
+
+    <tasks name="All.Plume">
+        <include>res/bench/*/plume</include>
+    </tasks>
+</benchmark>
