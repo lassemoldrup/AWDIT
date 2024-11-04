@@ -42,6 +42,8 @@ enum Command {
         to_path: PathBuf,
         #[clap(short = 's', long, default_value_t = false)]
         no_strip_init: bool,
+        #[clap(short, long, default_value_t = false)]
+        max_63_bits: bool,
         #[clap(short, long, default_value_t = HistoryFormat::Cobra)]
         from_format: HistoryFormat,
         #[clap(short, long, default_value_t = HistoryFormat::Plume)]
@@ -594,6 +596,7 @@ fn main() -> anyhow::Result<()> {
             from_path,
             to_path,
             no_strip_init,
+            max_63_bits,
             from_format,
             to_format,
         } => {
@@ -608,6 +611,9 @@ fn main() -> anyhow::Result<()> {
             };
             if !no_strip_init {
                 history.sessions.pop();
+            }
+            if max_63_bits {
+                history.strip_64th_bit();
             }
 
             match to_format {

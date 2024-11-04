@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 use std::collections::hash_map::Entry;
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::fmt::{self, Display, Formatter, Write};
 use std::mem;
 
@@ -106,6 +106,28 @@ impl History {
             }
         }
         map
+    }
+
+    pub fn strip_64th_bit(&mut self) {
+        for session in &mut self.sessions {
+            for transaction in session {
+                for event in &mut transaction.events {
+                    if let Event::Write(kv) = event {
+                        kv.key.0 &= 0x7FFF_FFFF_FFFF_FFFF;
+                        kv.value.0 &= 0x7FFF_FFFF_FFFF_FFFF;
+                    }
+                }
+            }
+        }
+        let aborted_writes = self
+            .aborted_writes
+            .iter()
+            .map(|kv| KeyValuePair {
+                key: Key(kv.key.0 & 0x7FFF_FFFF_FFFF_FFFF),
+                value: Value(kv.value.0 & 0x7FFF_FFFF_FFFF_FFFF),
+            })
+            .collect();
+        self.aborted_writes = aborted_writes;
     }
 }
 
