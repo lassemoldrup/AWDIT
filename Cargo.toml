@@ -19,7 +19,7 @@ thiserror = "1.0"
 anyhow = "1.0"
 regex = "1.11"
 smallvec = "1.13"
-dbcop = { git = "https://github.com/lassemoldrup/dbcop.git", branch = "lassemoldrup", optional = true }
+dbcop = { path = "tools/dbcop", optional = true }
 bincode = { version = "1.3", optional = true }
 chrono = { version = "0.4", optional = true }
 

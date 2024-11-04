@@ -129,6 +129,15 @@ impl HistoryStats {
     }
 }
 
+impl Display for HistoryStats {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        writeln!(f, "#Sessions: {}", self.num_sessions)?;
+        writeln!(f, "#Txns:     {}", self.num_transactions)?;
+        writeln!(f, "#Events:   {}", self.num_events)?;
+        writeln!(f, "#Keys:     {}", self.num_keys)
+    }
+}
+
 pub struct HistoryChecker<'h, R> {
     report: R,
     history: &'h History,

@@ -47,6 +47,12 @@ enum Command {
         #[clap(short, long, default_value_t = HistoryFormat::Plume)]
         to_format: HistoryFormat,
     },
+    Stats {
+        #[arg(required = true)]
+        path: PathBuf,
+        #[clap(short, long, default_value_t = HistoryFormat::Plume)]
+        format: HistoryFormat,
+    },
 }
 
 #[derive(Args)]
@@ -614,6 +620,19 @@ fn main() -> anyhow::Result<()> {
                     .serialize_dbcop_history(&to_path)
                     .context("Failed to write DBCop history")?,
             }
+        }
+        Command::Stats { path, format } => {
+            let history = match format {
+                HistoryFormat::Plume => History::parse_plume_history(&path)
+                    .context("Failed to parse path as Plume history")?,
+                HistoryFormat::Cobra => History::parse_cobra_history(&path)
+                    .context("Failed to parse path as Cobra history")?,
+                #[cfg(feature = "dbcop")]
+                HistoryFormat::DbCop => History::parse_dbcop_history(&path)
+                    .context("Failed to parse path as Cobra history")?,
+            };
+            println!("Stats for {}:", path.display());
+            println!("{}", history.stats());
         }
     }
     Ok(())

@@ -1,0 +1,3 @@
+[submodule "tools/dbcop"]
+	path = tools/dbcop
+	url = https://github.com/lassemoldrup/dbcop.git
