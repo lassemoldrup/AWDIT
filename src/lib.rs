@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 use std::collections::hash_map::Entry;
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
 use std::fmt::{self, Display, Formatter, Write};
 use std::mem;
 
@@ -112,10 +112,12 @@ impl History {
         for session in &mut self.sessions {
             for transaction in session {
                 for event in &mut transaction.events {
-                    if let Event::Write(kv) = event {
-                        kv.key.0 &= 0x7FFF_FFFF_FFFF_FFFF;
-                        kv.value.0 &= 0x7FFF_FFFF_FFFF_FFFF;
-                    }
+                    let kv = match event {
+                        Event::Read(kv) => kv,
+                        Event::Write(kv) => kv,
+                    };
+                    kv.key.0 &= 0x7FFF_FFFF_FFFF_FFFF;
+                    kv.value.0 &= 0x7FFF_FFFF_FFFF_FFFF;
                 }
             }
         }

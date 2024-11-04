@@ -20,7 +20,7 @@ def run_benchexec(cmd):
         if key == 'terminationreason' and val == 'cputime':
             return 'DNF', 'DNF'
         elif key == 'terminationreason' and val == 'memory':
-            memory = 'OOM', 'OOM'
+            return 'OOM', 'OOM'
     return time, memory
     
 # Run with read-committed, read-atomic, or causal
@@ -59,26 +59,28 @@ def run_all_algs(history, isolation):
     return times, mems
 
 if __name__ == '__main__':
-    headers = set()
     for isolation in ['rc', 'ra', 'cc']:
-        for entry in itertools.islice(os.listdir('res/bench'), 4):
-            [_, db, script, _, _, txns, threads] = entry.split('-')
+        headers = set()
+        for entry in os.listdir('res/bench'):
+            _, db, script, _, _, txns, threads = entry.split('-')
             times, mems = run_all_algs(os.path.join('res/bench', entry), isolation)
 
             with open(f'results/{db}-{script}-{isolation}-time.csv', 'a', newline='') as csvfile:
                 writer = csv.writer(csvfile)
                 if (db, script) not in headers:
                     if isolation == 'cc':
-                         writer.writerow(['#txns', 'ours', 'plume', 'dbcop'])
-                    writer.writerow(['#txns', 'ours', 'plume'])
+                        writer.writerow(['#txns', 'ours', 'plume', 'dbcop'])
+                    else:
+                        writer.writerow(['#txns', 'ours', 'plume'])
                 writer.writerow([txns] + times)
 
             with open(f'results/{db}-{script}-{isolation}-mem.csv', 'a', newline='') as csvfile:
                 writer = csv.writer(csvfile)
                 if (db, script) not in headers:
                     if isolation == 'cc':
-                         writer.writerow(['#txns', 'ours', 'plume', 'dbcop'])
-                    writer.writerow(['#txns', 'ours', 'plume'])
+                        writer.writerow(['#txns', 'ours', 'plume', 'dbcop'])
+                    else:
+                        writer.writerow(['#txns', 'ours', 'plume'])
                 writer.writerow([txns] + mems)
 
             headers.add((db, script))

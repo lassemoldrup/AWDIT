@@ -34,7 +34,7 @@ enum Command {
         #[clap(short, long, default_value_t = ReportMode::Full)]
         report_mode: ReportMode,
     },
-    // Convert a Plume/Cobra/DBCop history to a Plume/DBCop history
+    /// Convert a Plume/Cobra/DBCop history to a Plume/DBCop history
     Convert {
         #[arg(required = true)]
         from_path: PathBuf,
