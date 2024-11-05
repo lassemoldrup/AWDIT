@@ -1,7 +1,7 @@
 import subprocess
 import os
 import csv
-import itertools
+from datetime import datetime
 
 def run_benchexec(cmd):
     result = subprocess.run(
@@ -64,8 +64,9 @@ if __name__ == '__main__':
         for entry in os.listdir('res/bench'):
             _, db, script, _, _, txns, threads = entry.split('-')
             times, mems = run_all_algs(os.path.join('res/bench', entry), isolation)
+            date = datetime.now().strftime('%Y-%m-%d')
 
-            with open(f'results/{db}-{script}-{isolation}-s{threads}-time.csv', 'a', newline='') as csvfile:
+            with open(f'results/{date}-{db}-{script}-{isolation}-s{threads}-time.csv', 'a', newline='') as csvfile:
                 writer = csv.writer(csvfile)
                 if (db, script) not in headers:
                     if isolation == 'cc':
@@ -74,7 +75,7 @@ if __name__ == '__main__':
                         writer.writerow(['#txns', 'ours (s)', 'plume (s)'])
                 writer.writerow([txns] + times)
 
-            with open(f'results/{db}-{script}-{isolation}-s{threads}-mem.csv', 'a', newline='') as csvfile:
+            with open(f'results/{date}-{db}-{script}-{isolation}-s{threads}-mem.csv', 'a', newline='') as csvfile:
                 writer = csv.writer(csvfile)
                 if (db, script) not in headers:
                     if isolation == 'cc':
