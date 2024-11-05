@@ -14,9 +14,9 @@ def run_benchexec(cmd):
         [key, val] = line.strip().split('=')
         memory = 'N/A'
         if key == 'cputime':
-            time = val
+            time = val.removesuffix('s')
         if key == 'memory':
-            memory = val
+            memory = str(int(val) // 1024 // 1024)
         if key == 'terminationreason' and val == 'cputime':
             return 'DNF', 'DNF'
         elif key == 'terminationreason' and val == 'memory':
@@ -65,22 +65,35 @@ if __name__ == '__main__':
             _, db, script, _, _, txns, threads = entry.split('-')
             times, mems = run_all_algs(os.path.join('res/bench', entry), isolation)
 
-            with open(f'results/{db}-{script}-{isolation}-time.csv', 'a', newline='') as csvfile:
+            with open(f'results/{db}-{script}-{isolation}-s{threads}-time.csv', 'a', newline='') as csvfile:
                 writer = csv.writer(csvfile)
                 if (db, script) not in headers:
                     if isolation == 'cc':
-                        writer.writerow(['#txns', 'ours', 'plume', 'dbcop'])
+                        writer.writerow(['#txns', 'ours (s)', 'plume (s)', 'dbcop (s)'])
                     else:
-                        writer.writerow(['#txns', 'ours', 'plume'])
+                        writer.writerow(['#txns', 'ours (s)', 'plume (s)'])
                 writer.writerow([txns] + times)
 
-            with open(f'results/{db}-{script}-{isolation}-mem.csv', 'a', newline='') as csvfile:
+            with open(f'results/{db}-{script}-{isolation}-s{threads}-mem.csv', 'a', newline='') as csvfile:
                 writer = csv.writer(csvfile)
                 if (db, script) not in headers:
                     if isolation == 'cc':
-                        writer.writerow(['#txns', 'ours', 'plume', 'dbcop'])
+                        writer.writerow(['#txns', 'ours (MiB)', 'plume (MiB)', 'dbcop (MiB)'])
                     else:
-                        writer.writerow(['#txns', 'ours', 'plume'])
+                        writer.writerow(['#txns', 'ours (MiB)', 'plume (MiB)'])
                 writer.writerow([txns] + mems)
 
             headers.add((db, script))
+        
+        # Sort the results
+        for entry in os.listdir('results'):
+            with open(f'results/{entry}', 'r') as csvfile:
+                reader = csv.reader(csvfile)
+                rows = list(reader)
+                headers = rows[0]
+                rows = rows[1:]
+                rows.sort(key=lambda x: int(x[0]))
+            with open(f'results/{entry}', 'w', newline='') as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerow(headers)
+                writer.writerows(rows)
