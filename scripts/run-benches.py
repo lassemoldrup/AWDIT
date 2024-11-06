@@ -69,7 +69,7 @@ def run_dbcop(history):
             err_file.write(f'Inconsistent. DBCop: {history}\n')
     return time, memory, result
 
-def run_all_algs(history, isolation, txns):
+def run_all_algs(history, isolation, txns, skip_dbcop = False):
     ours_iso_map = {'rc': 'read-committed', 'ra': 'read-atomic', 'cc': 'causal'}
     plume_iso_map = {'rc': 'RC', 'ra': 'RA', 'cc': 'TCC'}
     times = []
@@ -89,7 +89,7 @@ def run_all_algs(history, isolation, txns):
     results.append(res)
     
     # DBCop
-    if isolation == 'cc':
+    if isolation == 'cc' and not skip_dbcop:
         if int(txns) > 10000:
             times.append('DNR')
             mems.append('DNR')
@@ -102,32 +102,11 @@ def run_all_algs(history, isolation, txns):
 
     return times, mems, results
 
-if __name__ == '__main__':
-    if len(sys.argv) < 3:
-        print('usage: python scripts/run-benches.py path/to/benches results/path')
-        exit(1)
-    in_path = sys.argv[1]
-    results_path = sys.argv[2]
-
-    print('Building our tool..')
-    subprocess.run(
-        ['cargo', 'build', '--release'],
-        check=True,
-        stderr=subprocess.PIPE,
-        text=True
-    )
-    print('Building DBCop..')
-    subprocess.run(
-        ['cargo', 'build', '--release', '--manifest-path', 'tools/dbcop/Cargo.toml'],
-        check=True,
-        stderr=subprocess.PIPE,
-        text=True
-    )
-
+def txn_series(in_path, results_path):
     for isolation in ['rc', 'ra', 'cc']:
         headers = set()
         entries = list(os.listdir(in_path))
-        for i, entry in enumerate(entries[:2]):
+        for i, entry in enumerate(entries):
             print(f'{isolation} {i+1}/{len(entries)}: Running on {entry}')
 
             _, db, script, _, _, txns, threads = entry.split('-')
@@ -177,3 +156,80 @@ if __name__ == '__main__':
                 writer = csv.writer(csvfile)
                 writer.writerow(headers)
                 writer.writerows(rows)
+
+def session_series(in_path, results_path):
+    for isolation in ['rc', 'ra', 'cc']:
+        headers = set()
+        entries = list(os.listdir(in_path))
+        for i, entry in enumerate(entries):
+            print(f'{isolation} {i+1}/{len(entries)}: Running on {entry}')
+
+            _, db, script, _, _, txns, threads = entry.split('-')
+            times, mems, results = run_all_algs(os.path.join(in_path, entry), isolation, txns, skip_dbcop=True)
+
+            date = datetime.now().strftime('%Y-%m-%d')
+            file_prefix = f'{date}-{db}-{script}-{isolation}-t{txns}'
+
+            with open(os.path.join(results_path, f'{file_prefix}-time.csv'), 'a', newline='') as csvfile:
+                writer = csv.writer(csvfile)
+                if (db, script) not in headers:
+                    writer.writerow(['#sessions', 'ours (s)', 'plume (s)'])
+                writer.writerow([threads] + times)
+
+            with open(os.path.join(results_path, f'{file_prefix}-mem.csv'), 'a', newline='') as csvfile:
+                writer = csv.writer(csvfile)
+                if (db, script) not in headers:
+                       writer.writerow(['#sessions', 'ours (MiB)', 'plume (MiB)'])
+                writer.writerow([threads] + mems)
+            
+            with open(os.path.join(results_path, f'{file_prefix}-res.csv'), 'a', newline='') as csvfile:
+                writer = csv.writer(csvfile)
+                if (db, script) not in headers:
+                    writer.writerow(['#sessions', 'ours', 'plume'])
+                writer.writerow([threads] + results)
+
+            headers.add((db, script))
+        
+        # Sort the results
+        for entry in os.listdir(results_path):
+            with open(os.path.join(results_path, entry), 'r') as csvfile:
+                reader = csv.reader(csvfile)
+                rows = list(reader)
+                headers = rows[0]
+                rows = rows[1:]
+                rows.sort(key=lambda x: int(x[0]))
+            with open(os.path.join(results_path, entry), 'w', newline='') as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerow(headers)
+                writer.writerows(rows)
+
+if __name__ == '__main__':
+    if len(sys.argv) < 4:
+        print('usage: python scripts/run-benches.py <txn OR sess> path/to/benches results/path')
+        exit(1)
+    txn_sess = sys.argv[1]
+    in_path = sys.argv[2]
+    results_path = sys.argv[3]
+
+    print('Building our tool..')
+    subprocess.run(
+        ['cargo', 'build', '--release'],
+        check=True,
+        stderr=subprocess.PIPE,
+        text=True
+    )
+    print('Building DBCop..')
+    subprocess.run(
+        ['cargo', 'build', '--release', '--manifest-path', 'tools/dbcop/Cargo.toml'],
+        check=True,
+        stderr=subprocess.PIPE,
+        text=True
+    )
+
+    if txn_sess == 'txn':
+        txn_series(in_path, results_path)
+    elif txn_sess == 'sess':
+        session_series(in_path, results_path)
+    else:
+        print('The first argument should be either `txn` or `sess`')
+        exit(1)
