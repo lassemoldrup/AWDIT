@@ -102,6 +102,19 @@ def run_all_algs(history, isolation, txns, skip_dbcop = False):
 
     return times, mems, results
 
+def sort_results(results_path):
+    for entry in os.listdir(results_path):
+        with open(os.path.join(results_path, entry), 'r') as csvfile:
+            reader = csv.reader(csvfile)
+            rows = list(reader)
+            headers = rows[0]
+            rows = rows[1:]
+            rows.sort(key=lambda x: int(x[0]))
+        with open(os.path.join(results_path, entry), 'w', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(headers)
+            writer.writerows(rows)
+
 def txn_series(in_path, results_path):
     for isolation in ['rc', 'ra', 'cc']:
         headers = set()
@@ -144,18 +157,8 @@ def txn_series(in_path, results_path):
 
             headers.add((db, script, threads))
         
-        # Sort the results
-        for entry in os.listdir(results_path):
-            with open(os.path.join(results_path, entry), 'r') as csvfile:
-                reader = csv.reader(csvfile)
-                rows = list(reader)
-                headers = rows[0]
-                rows = rows[1:]
-                rows.sort(key=lambda x: int(x[0]))
-            with open(os.path.join(results_path, entry), 'w', newline='') as csvfile:
-                writer = csv.writer(csvfile)
-                writer.writerow(headers)
-                writer.writerows(rows)
+        sort_results()
+        
 
 def session_series(in_path, results_path):
     for isolation in ['rc', 'ra', 'cc']:
@@ -172,36 +175,25 @@ def session_series(in_path, results_path):
 
             with open(os.path.join(results_path, f'{file_prefix}-time.csv'), 'a', newline='') as csvfile:
                 writer = csv.writer(csvfile)
-                if (db, script) not in headers:
+                if (db, script, txns) not in headers:
                     writer.writerow(['#sessions', 'ours (s)', 'plume (s)'])
                 writer.writerow([threads] + times)
 
             with open(os.path.join(results_path, f'{file_prefix}-mem.csv'), 'a', newline='') as csvfile:
                 writer = csv.writer(csvfile)
-                if (db, script) not in headers:
+                if (db, script, txns) not in headers:
                        writer.writerow(['#sessions', 'ours (MiB)', 'plume (MiB)'])
                 writer.writerow([threads] + mems)
             
             with open(os.path.join(results_path, f'{file_prefix}-res.csv'), 'a', newline='') as csvfile:
                 writer = csv.writer(csvfile)
-                if (db, script) not in headers:
+                if (db, script, txns) not in headers:
                     writer.writerow(['#sessions', 'ours', 'plume'])
                 writer.writerow([threads] + results)
 
-            headers.add((db, script))
+            headers.add((db, script, txns))
         
-        # Sort the results
-        for entry in os.listdir(results_path):
-            with open(os.path.join(results_path, entry), 'r') as csvfile:
-                reader = csv.reader(csvfile)
-                rows = list(reader)
-                headers = rows[0]
-                rows = rows[1:]
-                rows.sort(key=lambda x: int(x[0]))
-            with open(os.path.join(results_path, entry), 'w', newline='') as csvfile:
-                writer = csv.writer(csvfile)
-                writer.writerow(headers)
-                writer.writerows(rows)
+        sort_results()
 
 if __name__ == '__main__':
     if len(sys.argv) < 4:
@@ -214,16 +206,12 @@ if __name__ == '__main__':
     print('Building our tool..')
     subprocess.run(
         ['cargo', 'build', '--release'],
-        check=True,
-        stderr=subprocess.PIPE,
-        text=True
+        check=True
     )
     print('Building DBCop..')
     subprocess.run(
         ['cargo', 'build', '--release', '--manifest-path', 'tools/dbcop/Cargo.toml'],
-        check=True,
-        stderr=subprocess.PIPE,
-        text=True
+        check=True
     )
 
     if txn_sess == 'txn':

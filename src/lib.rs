@@ -9,6 +9,7 @@ use dbcop::db::history::HistParams;
 
 use itertools::Itertools;
 use rustc_hash::{FxHashMap, FxHashSet};
+use serde::Serialize;
 use smallvec::SmallVec;
 use util::{intersect_map, Captures, GetTwoMut};
 use vector_clock::VectorClock;
@@ -153,6 +154,7 @@ impl History {
     }
 }
 
+#[derive(Serialize)]
 pub struct HistoryStats {
     pub num_sessions: usize,
     pub num_transactions: usize,

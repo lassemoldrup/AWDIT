@@ -58,6 +58,8 @@ enum Command {
         path: PathBuf,
         #[clap(short, long, default_value_t = HistoryFormat::Plume)]
         format: HistoryFormat,
+        #[clap(short, long = "json", default_value_t = false)]
+        json_output: bool,
     },
 }
 
@@ -637,7 +639,11 @@ fn main() -> anyhow::Result<()> {
                     .context("Failed to write DBCop history")?,
             }
         }
-        Command::Stats { path, format } => {
+        Command::Stats {
+            path,
+            format,
+            json_output,
+        } => {
             let history = match format {
                 HistoryFormat::Plume => History::parse_plume_history(&path)
                     .context("Failed to parse path as Plume history")?,
@@ -647,8 +653,12 @@ fn main() -> anyhow::Result<()> {
                 HistoryFormat::DbCop => History::parse_dbcop_history(&path)
                     .context("Failed to parse path as Cobra history")?,
             };
-            println!("Stats for {}:", path.display());
-            println!("{}", history.stats());
+            if json_output {
+                println!("{}", serde_json::to_string_pretty(&history.stats())?);
+            } else {
+                println!("Stats for {}:", path.display());
+                println!("{}", history.stats());
+            }
         }
     }
     Ok(())

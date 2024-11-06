@@ -303,6 +303,8 @@ dependencies = [
  "rand_distr",
  "regex",
  "rustc-hash",
+ "serde",
+ "serde_json",
  "smallvec",
  "strum",
  "test-generator",
