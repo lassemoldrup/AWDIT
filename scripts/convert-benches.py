@@ -1,21 +1,21 @@
+from concurrent.futures import ThreadPoolExecutor
 import sys
 import subprocess
 import os
 
-def convert_all(in_path, out_path):
-    # TODO: Parallelize 
-    for entry in os.listdir(in_path):
-        full_path = os.path.join(in_path, entry, 'cobra/log')
-        plume_path = os.path.join(out_path, entry, 'plume')
-        dbcop_path = os.path.join(out_path, entry, 'dbcop')
+def convert_entry(in_path, out_path, entry):
+    full_path = os.path.join(in_path, entry, 'cobra/log')
+    plume_path = os.path.join(out_path, entry, 'plume')
+    dbcop_path = os.path.join(out_path, entry, 'dbcop')
 
-        # With TPC-C using Postgres and CockroachDB, the DB is loaded from an inital state,
-        # hence reads of those initial writes will show up as thin-air reads. '-F' fixes this.
-        fix_flag = []
-        if 'postgres-tpcc' in entry or 'cockroachdb-tpcc' in entry:
-            fix_flag = ['-F']
+    # With TPC-C using Postgres and CockroachDB, the DB is loaded from an inital state,
+    # hence reads of those initial writes will show up as thin-air reads. '-F' fixes this.
+    fix_flag = []
+    if 'postgres-tpcc' in entry or 'cockroachdb-tpcc' in entry:
+        fix_flag = ['-F']
 
-        try:
+    try:
+        if not os.path.exists(plume_path):
             if len(fix_flag) == 0:
                 print(f'Running: cargo run --release -- convert -m -t plume {full_path} {plume_path}')
             else:
@@ -28,7 +28,10 @@ def convert_all(in_path, out_path):
                 text=True
             )
             print(result.stdout)
+        else:
+            print(f'Note: skipping {plume_path}')
 
+        if not os.path.exists(dbcop_path):
             if len(fix_flag) == 0:
                 print(f'Running: cargo run --release -- convert -m -t dbcop {full_path} {dbcop_path}')
             else:
@@ -41,9 +44,17 @@ def convert_all(in_path, out_path):
                 text=True
             )
             print(result.stdout)
-        except subprocess.CalledProcessError as e:
-            print(f'Error running cargo in {entry}: {e.stderr}')
-            exit(1)
+        else:
+            print(f'Note: skipping {dbcop_path}')
+    except subprocess.CalledProcessError as e:
+        print(f'Error running cargo in {entry}: {e.stderr}')
+        exit(1)
+
+def convert_all(in_path, out_path):
+    entries = list(os.listdir(in_path))
+    with ThreadPoolExecutor() as executor:
+        for entry in entries:
+            executor.submit(convert_entry, in_path, out_path, entry)
 
 if __name__ == '__main__':
     if len(sys.argv) < 3:

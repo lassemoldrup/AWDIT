@@ -41,9 +41,6 @@ enum Command {
         #[arg(required = true)]
         to_path: PathBuf,
         #[clap(short, long, default_value_t = false)]
-        /// Strip the last session from the history.
-        strip_init: bool,
-        #[clap(short, long, default_value_t = false)]
         /// Zeros the MSB of each key and value (needed because Plume
         /// only supports signed 64-bit numbers).
         max_63_bits: bool,
@@ -602,7 +599,6 @@ fn main() -> anyhow::Result<()> {
         Command::Convert {
             from_path,
             to_path,
-            strip_init,
             max_63_bits,
             fix_thin_air_reads,
             from_format,
@@ -617,8 +613,11 @@ fn main() -> anyhow::Result<()> {
                 HistoryFormat::DbCop => History::parse_dbcop_history(&from_path)
                     .context("Failed to parse path as Cobra history")?,
             };
-            if strip_init {
-                history.sessions.pop();
+            match from_format {
+                HistoryFormat::Plume | HistoryFormat::Cobra => {
+                    history.sessions.pop();
+                }
+                HistoryFormat::DbCop => {}
             }
             if max_63_bits {
                 history.strip_64th_bit();

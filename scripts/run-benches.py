@@ -26,7 +26,7 @@ def run_benchexec(cmd):
         if key == 'returnvalue':
             if val != '0':
                 with open('errors.log', 'a') as err_file:
-                    err_file.write(f'WARN: Non-zero exit code {val}: {' '.join(cmd)}\n')
+                    err_file.write(f'WARN: Non-zero exit code {val}: {" ".join(cmd)}\n')
             exitcode = val
     return time, memory, exitcode
     
@@ -90,7 +90,7 @@ def run_all_algs(history, isolation, txns):
     
     # DBCop
     if isolation == 'cc':
-        if txns > 10000:
+        if int(txns) > 10000:
             times.append('DNR')
             mems.append('DNR')
             results.append('DNR')
@@ -127,18 +127,18 @@ if __name__ == '__main__':
     for isolation in ['rc', 'ra', 'cc']:
         headers = set()
         entries = list(os.listdir(in_path))
-        for i, entry in enumerate(entries):
+        for i, entry in enumerate(entries[:2]):
             print(f'{isolation} {i+1}/{len(entries)}: Running on {entry}')
 
             _, db, script, _, _, txns, threads = entry.split('-')
-            times, mems, results = run_all_algs(os.path.join('res/bench', entry), isolation, txns)
+            times, mems, results = run_all_algs(os.path.join(in_path, entry), isolation, txns)
 
             date = datetime.now().strftime('%Y-%m-%d')
             file_prefix = f'{date}-{db}-{script}-{isolation}-s{threads}'
 
             with open(os.path.join(results_path, f'{file_prefix}-time.csv'), 'a', newline='') as csvfile:
                 writer = csv.writer(csvfile)
-                if (db, script) not in headers:
+                if (db, script, threads) not in headers:
                     if isolation == 'cc':
                         writer.writerow(['#txns', 'ours (s)', 'plume (s)', 'dbcop (s)'])
                     else:
@@ -147,7 +147,7 @@ if __name__ == '__main__':
 
             with open(os.path.join(results_path, f'{file_prefix}-mem.csv'), 'a', newline='') as csvfile:
                 writer = csv.writer(csvfile)
-                if (db, script) not in headers:
+                if (db, script, threads) not in headers:
                     if isolation == 'cc':
                         writer.writerow(['#txns', 'ours (MiB)', 'plume (MiB)', 'dbcop (MiB)'])
                     else:
@@ -156,14 +156,14 @@ if __name__ == '__main__':
             
             with open(os.path.join(results_path, f'{file_prefix}-res.csv'), 'a', newline='') as csvfile:
                 writer = csv.writer(csvfile)
-                if (db, script) not in headers:
+                if (db, script, threads) not in headers:
                     if isolation == 'cc':
                         writer.writerow(['#txns', 'ours', 'plume', 'dbcop'])
                     else:
                         writer.writerow(['#txns', 'ours', 'plume'])
                 writer.writerow([txns] + results)
 
-            headers.add((db, script))
+            headers.add((db, script, threads))
         
         # Sort the results
         for entry in os.listdir(results_path):
