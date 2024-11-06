@@ -131,6 +131,26 @@ impl History {
             .collect();
         self.aborted_writes = aborted_writes;
     }
+
+    pub fn fix_thin_air_reads(&mut self) {
+        let writes: FxHashSet<_> = self
+            .sessions
+            .iter()
+            .flat_map(|s| s.iter().flat_map(|t| &t.events))
+            .filter_map(|e| e.is_write().then(|| e.kv()))
+            .collect();
+        for session in &mut self.sessions {
+            for txn in session {
+                for event in &mut txn.events {
+                    if let Event::Read(kv) = event {
+                        if !writes.contains(kv) && !self.aborted_writes.contains(kv) {
+                            kv.value = Value(0);
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 pub struct HistoryStats {
@@ -884,22 +904,30 @@ pub enum Event {
 }
 
 impl Event {
-    pub fn key(&self) -> Key {
+    pub fn key(self) -> Key {
         match self {
             Event::Read(kv) | Event::Write(kv) => kv.key,
         }
     }
 
-    pub fn value(&self) -> Value {
+    pub fn value(self) -> Value {
         match self {
             Event::Read(kv) | Event::Write(kv) => kv.value,
         }
     }
 
-    pub fn kv(&self) -> KeyValuePair {
+    pub fn kv(self) -> KeyValuePair {
         match self {
-            Event::Read(kv) | Event::Write(kv) => *kv,
+            Event::Read(kv) | Event::Write(kv) => kv,
         }
+    }
+
+    pub fn is_read(self) -> bool {
+        matches!(self, Self::Read(_))
+    }
+
+    pub fn is_write(self) -> bool {
+        matches!(self, Self::Write(_))
     }
 }
 
