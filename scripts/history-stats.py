@@ -26,7 +26,7 @@ def convert_txn_entry(in_path, out_path, entry):
     file_prefix = f'{date}-{db}-{script}-s{threads}'
     with open(os.path.join(out_path, f'{file_prefix}-stats.csv'), 'a', newline='') as csvfile:
         writer = csv.writer(csvfile)
-        writer.writerow([txns] + [stats['num_transactions'], stats['num_events'], stats['num_keys']])
+        writer.writerow([txns, stats['num_transactions'], threads, stats['num_events'], stats['num_keys']])
 
 def convert_session_entry(in_path, out_path, entry):
     stats = get_stats(in_path, entry)
@@ -35,7 +35,7 @@ def convert_session_entry(in_path, out_path, entry):
     file_prefix = f'{date}-{db}-{script}-t{txns}'
     with open(os.path.join(out_path, f'{file_prefix}-stats.csv'), 'a', newline='') as csvfile:
         writer = csv.writer(csvfile)
-        writer.writerow([threads] + [stats['num_transactions'], stats['num_events'], stats['num_keys']])
+        writer.writerow([threads, stats['num_transactions'], stats['num_events'], stats['num_keys']])
 
 def sort_results(results_path):
     for entry in os.listdir(results_path):
@@ -60,7 +60,7 @@ def convert_txn_series(in_path, out_path):
         file_prefix = f'{date}-{db}-{script}-s{threads}'
         with open(os.path.join(out_path, f'{file_prefix}-stats.csv'), 'a', newline='') as csvfile:
             writer = csv.writer(csvfile)
-            writer.writerow(['#txns', '#actual_txns', '#events', '#keys'])
+            writer.writerow(['txns', 'actual_txns', 'sessions', 'events', 'keys'])
             headers.add((db, script, threads))
 
     with ThreadPoolExecutor() as executor:
@@ -78,7 +78,7 @@ def convert_session_series(in_path, out_path):
         file_prefix = f'{date}-{db}-{script}-t{txns}'
         with open(os.path.join(out_path, f'{file_prefix}-stats.csv'), 'a', newline='') as csvfile:
             writer = csv.writer(csvfile)
-            writer.writerow(['#sessions', '#actual_txns', '#events', '#keys'])
+            writer.writerow(['sessions', 'actual_txns', 'events', 'keys'])
             headers.add((db, script, txns))
 
     with ThreadPoolExecutor() as executor:

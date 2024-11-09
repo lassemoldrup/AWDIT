@@ -4,9 +4,11 @@ import sys
 import csv
 from datetime import datetime
 
+date = datetime.now().strftime('%Y-%m-%d')
+
 def run_benchexec(cmd):
     result = subprocess.run(
-        ['runexec', '--timelimit', '600', '--memlimit', str(32*10**9), '--read-only-dir', '/', '--overlay-dir', '/home', '--'] + cmd,
+        ['runexec', '--timelimit', '7200', '--memlimit', str(48*10**9), '--read-only-dir', '/', '--overlay-dir', '/home', '--'] + cmd,
         check=True,
         stdout=subprocess.PIPE,
         text=True
@@ -90,7 +92,7 @@ def run_all_algs(history, isolation, txns, skip_dbcop = False):
     
     # DBCop
     if isolation == 'cc' and not skip_dbcop:
-        if int(txns) > 10000:
+        if int(txns) > 5000:
             times.append('DNR')
             mems.append('DNR')
             results.append('DNR')
@@ -124,40 +126,38 @@ def txn_series(in_path, results_path):
 
             _, db, script, _, _, txns, threads = entry.split('-')
             times, mems, results = run_all_algs(os.path.join(in_path, entry), isolation, txns)
-
-            date = datetime.now().strftime('%Y-%m-%d')
             file_prefix = f'{date}-{db}-{script}-{isolation}-s{threads}'
 
             with open(os.path.join(results_path, f'{file_prefix}-time.csv'), 'a', newline='') as csvfile:
                 writer = csv.writer(csvfile)
                 if (db, script, threads) not in headers:
                     if isolation == 'cc':
-                        writer.writerow(['#txns', 'ours (s)', 'plume (s)', 'dbcop (s)'])
+                        writer.writerow(['txns', 'ours (s)', 'plume (s)', 'dbcop (s)'])
                     else:
-                        writer.writerow(['#txns', 'ours (s)', 'plume (s)'])
+                        writer.writerow(['txns', 'ours (s)', 'plume (s)'])
                 writer.writerow([txns] + times)
 
             with open(os.path.join(results_path, f'{file_prefix}-mem.csv'), 'a', newline='') as csvfile:
                 writer = csv.writer(csvfile)
                 if (db, script, threads) not in headers:
                     if isolation == 'cc':
-                        writer.writerow(['#txns', 'ours (MiB)', 'plume (MiB)', 'dbcop (MiB)'])
+                        writer.writerow(['txns', 'ours (MiB)', 'plume (MiB)', 'dbcop (MiB)'])
                     else:
-                        writer.writerow(['#txns', 'ours (MiB)', 'plume (MiB)'])
+                        writer.writerow(['txns', 'ours (MiB)', 'plume (MiB)'])
                 writer.writerow([txns] + mems)
             
             with open(os.path.join(results_path, f'{file_prefix}-res.csv'), 'a', newline='') as csvfile:
                 writer = csv.writer(csvfile)
                 if (db, script, threads) not in headers:
                     if isolation == 'cc':
-                        writer.writerow(['#txns', 'ours', 'plume', 'dbcop'])
+                        writer.writerow(['txns', 'ours', 'plume', 'dbcop'])
                     else:
-                        writer.writerow(['#txns', 'ours', 'plume'])
+                        writer.writerow(['txns', 'ours', 'plume'])
                 writer.writerow([txns] + results)
 
             headers.add((db, script, threads))
         
-        sort_results()
+    sort_results(results_path)
         
 
 def session_series(in_path, results_path):
@@ -169,31 +169,29 @@ def session_series(in_path, results_path):
 
             _, db, script, _, _, txns, threads = entry.split('-')
             times, mems, results = run_all_algs(os.path.join(in_path, entry), isolation, txns, skip_dbcop=True)
-
-            date = datetime.now().strftime('%Y-%m-%d')
             file_prefix = f'{date}-{db}-{script}-{isolation}-t{txns}'
 
             with open(os.path.join(results_path, f'{file_prefix}-time.csv'), 'a', newline='') as csvfile:
                 writer = csv.writer(csvfile)
                 if (db, script, txns) not in headers:
-                    writer.writerow(['#sessions', 'ours (s)', 'plume (s)'])
+                    writer.writerow(['sessions', 'ours (s)', 'plume (s)'])
                 writer.writerow([threads] + times)
 
             with open(os.path.join(results_path, f'{file_prefix}-mem.csv'), 'a', newline='') as csvfile:
                 writer = csv.writer(csvfile)
                 if (db, script, txns) not in headers:
-                       writer.writerow(['#sessions', 'ours (MiB)', 'plume (MiB)'])
+                       writer.writerow(['sessions', 'ours (MiB)', 'plume (MiB)'])
                 writer.writerow([threads] + mems)
             
             with open(os.path.join(results_path, f'{file_prefix}-res.csv'), 'a', newline='') as csvfile:
                 writer = csv.writer(csvfile)
                 if (db, script, txns) not in headers:
-                    writer.writerow(['#sessions', 'ours', 'plume'])
+                    writer.writerow(['sessions', 'ours', 'plume'])
                 writer.writerow([threads] + results)
 
             headers.add((db, script, txns))
         
-        sort_results()
+    sort_results(results_path)
 
 if __name__ == '__main__':
     if len(sys.argv) < 4:

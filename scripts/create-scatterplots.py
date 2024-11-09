@@ -15,9 +15,9 @@ if __name__ == '__main__':
         with open(os.path.join(path, f'{date}-time-{isolation}.csv'), 'w', newline='') as csvfile:
             writer = csv.writer(csvfile)
             if isolation == 'cc':
-                writer.writerow(['#txns', '#events', '#keys', 'ours (s)', 'plume (s)', 'dbcop (s)', 'ours (res)', 'plume (res)', 'dbcop (res)'])
+                writer.writerow(['txns', 'sessions', 'events', 'keys', 'ours (s)', 'plume (s)', 'dbcop (s)', 'ours (res)', 'plume (res)', 'dbcop (res)'])
             else:
-                writer.writerow(['#txns', '#events', '#keys', 'ours (s)', 'plume (s)', 'ours (res)', 'plume (res)'])
+                writer.writerow(['txns', 'sessions', 'events', 'keys', 'ours (s)', 'plume (s)', 'ours (res)', 'plume (res)'])
             
             times = {}
             results = {}
