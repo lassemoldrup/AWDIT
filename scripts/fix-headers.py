@@ -4,7 +4,7 @@ import csv
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:
-        print('usage: python scripts/create-scatterplots.py path/to/results')
+        print('usage: python scripts/fix-headers.py path/to/results')
         exit(1)
     path = sys.argv[1]
 

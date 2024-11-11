@@ -11,16 +11,11 @@ pub use dbcop::db::history::History as DbCopHistory;
 #[cfg(feature = "dbcop")]
 use dbcop::db::history::Transaction as DbCopTransaction;
 
-use regex::Regex;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{Event, Key, KeyValuePair, Transaction, Value};
 
 use super::History;
-
-thread_local! {
-    static PLUME_REGEX: Regex = Regex::new(r"([rw])\((\d++),(\d++),(\d++),(-?\d++)\)").unwrap();
-}
 
 impl History {
     pub fn parse_plume_history(path: impl AsRef<Path>) -> Result<Self, ParseHistoryError> {
@@ -48,22 +43,30 @@ impl History {
         let mut keys = FxHashSet::default();
 
         for e in contents.lines() {
-            let (_, [op, key, val, sess, txn]) = PLUME_REGEX
-                .with(|r| r.captures(e))
-                .ok_or(ParseHistoryError::InvalidPlumeFormat)?
-                .extract();
-            let key = key
-                .parse::<usize>()
-                .map_err(|_| ParseHistoryError::InvalidPlumeFormat)?;
-            let val = val
-                .parse::<usize>()
-                .map_err(|_| ParseHistoryError::InvalidPlumeFormat)?;
-            let sess = sess
-                .parse::<u64>()
-                .map_err(|_| ParseHistoryError::InvalidPlumeFormat)?;
-            let txn = txn
-                .parse::<i64>()
-                .map_err(|_| ParseHistoryError::InvalidPlumeFormat)?;
+            let (op, e) = e
+                .split_at_checked(1)
+                .ok_or(ParseHistoryError::InvalidPlumeFormat)?;
+            let e = e
+                .strip_prefix('(')
+                .and_then(|e| e.strip_suffix(')'))
+                .ok_or(ParseHistoryError::InvalidPlumeFormat)?;
+            let mut parts = e.split(',');
+            let key = parts
+                .next()
+                .and_then(|k| k.parse::<usize>().ok())
+                .ok_or(ParseHistoryError::InvalidPlumeFormat)?;
+            let val = parts
+                .next()
+                .and_then(|k| k.parse::<usize>().ok())
+                .ok_or(ParseHistoryError::InvalidPlumeFormat)?;
+            let sess = parts
+                .next()
+                .and_then(|k| k.parse::<u64>().ok())
+                .ok_or(ParseHistoryError::InvalidPlumeFormat)?;
+            let txn = parts
+                .next()
+                .and_then(|k| k.parse::<i64>().ok())
+                .ok_or(ParseHistoryError::InvalidPlumeFormat)?;
 
             keys.insert(Key(key));
             let kv = KeyValuePair {
