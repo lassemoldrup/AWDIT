@@ -14,10 +14,11 @@ if __name__ == '__main__':
     for isolation in ['rc', 'ra', 'cc']:
         with open(os.path.join(path, f'{date}-time-{isolation}.csv'), 'w', newline='') as csvfile:
             writer = csv.writer(csvfile)
+            headers = ['database', 'script', 'txns', 'sessions', 'events', 'keys']
             if isolation == 'cc':
-                writer.writerow(['txns', 'sessions', 'events', 'keys', 'ours (s)', 'plume (s)', 'dbcop (s)', 'ours (res)', 'plume (res)', 'dbcop (res)'])
+                writer.writerow(headers + ['ours (s)', 'plume (s)', 'dbcop (s)', 'ours (res)', 'plume (res)', 'dbcop (res)'])
             else:
-                writer.writerow(['txns', 'sessions', 'events', 'keys', 'ours (s)', 'plume (s)', 'ours (res)', 'plume (res)'])
+                writer.writerow(headers + ['ours (s)', 'plume (s)', 'ours (res)', 'plume (res)'])
             
             times = {}
             results = {}
@@ -38,7 +39,7 @@ if __name__ == '__main__':
                     elif entry.endswith('-stats.csv'):
                         elems = entry.split('-')[:-1]
                         elems.insert(-1, isolation)
-                        stats['-'.join(elems)] = [row[1:] for row in rows[1:]]
+                        stats['-'.join(elems)] = [elems[3:5] + row[1:] for row in rows[1:]]
             for k, ts in times.items():
                 res = results[k]
                 sts = stats[k]

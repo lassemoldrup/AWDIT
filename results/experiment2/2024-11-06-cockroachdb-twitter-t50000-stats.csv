@@ -1,4 +1,4 @@
-#sessions,#actual_txns,#events,#keys
+sessions,actual_txns,events,keys
 10,49912,349088,48797
 20,49787,348236,48191
 30,49703,346672,48631

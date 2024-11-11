@@ -7,3 +7,21 @@ Inconsistent. Ours (read-committed): res/bench/experiment1/1-postgres-tpcc-high-
 Inconsistent. Plume (RC): res/bench/experiment1/1-postgres-tpcc-high-local-32768-100
 Inconsistent. Ours (read-committed): res/bench/experiment1/1-postgres-tpcc-high-local-16384-50
 Inconsistent. Plume (RC): res/bench/experiment1/1-postgres-tpcc-high-local-16384-50
+Inconsistent. Ours (read-atomic): res/bench/experiment1/1-cockroachdb-tpcc-high-local-32768-100
+Inconsistent. Plume (RA): res/bench/experiment1/1-cockroachdb-tpcc-high-local-32768-100
+Inconsistent. Ours (read-atomic): res/bench/experiment1/1-postgres-tpcc-high-local-1048576-100
+Inconsistent. Ours (read-atomic): res/bench/experiment1/1-postgres-tpcc-high-local-2048-50
+Inconsistent. Plume (RA): res/bench/experiment1/1-postgres-tpcc-high-local-2048-50
+Inconsistent. Ours (read-atomic): res/bench/experiment1/1-postgres-tpcc-high-local-32768-100
+Inconsistent. Plume (RA): res/bench/experiment1/1-postgres-tpcc-high-local-32768-100
+Inconsistent. Ours (read-atomic): res/bench/experiment1/1-postgres-tpcc-high-local-16384-50
+WARN: Non-zero exit code 1: java -jar tools/Plume/Plume-1.0-SNAPSHOT-shaded.jar -i RA -t PLUME res/bench/experiment1/1-postgres-tpcc-high-local-16384-50/plume/history.txt
+Inconsistent. Ours (causal): res/bench/experiment1/1-cockroachdb-tpcc-high-local-32768-100
+Inconsistent. Plume (TCC): res/bench/experiment1/1-cockroachdb-tpcc-high-local-32768-100
+Inconsistent. Ours (causal): res/bench/experiment1/1-postgres-tpcc-high-local-1048576-100
+Inconsistent. Ours (causal): res/bench/experiment1/1-postgres-tpcc-high-local-2048-50
+Inconsistent. Plume (TCC): res/bench/experiment1/1-postgres-tpcc-high-local-2048-50
+Inconsistent. Ours (causal): res/bench/experiment1/1-postgres-tpcc-high-local-32768-100
+Inconsistent. Plume (TCC): res/bench/experiment1/1-postgres-tpcc-high-local-32768-100
+Inconsistent. Ours (causal): res/bench/experiment1/1-postgres-tpcc-high-local-16384-50
+WARN: Non-zero exit code 1: java -jar tools/Plume/Plume-1.0-SNAPSHOT-shaded.jar -i TCC -t PLUME res/bench/experiment1/1-postgres-tpcc-high-local-16384-50/plume/history.txt

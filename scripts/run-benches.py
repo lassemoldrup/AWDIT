@@ -4,11 +4,14 @@ import sys
 import csv
 from datetime import datetime
 
+time_limit = '7200' # seconds
+mem_limit = str(55*10**9) # bytes
+
 date = datetime.now().strftime('%Y-%m-%d')
 
 def run_benchexec(cmd):
     result = subprocess.run(
-        ['runexec', '--timelimit', '7200', '--memlimit', str(48*10**9), '--read-only-dir', '/', '--overlay-dir', '/home', '--'] + cmd,
+        ['runexec', '--timelimit', time_limit, '--memlimit', mem_limit, '--read-only-dir', '/', '--overlay-dir', '/home', '--'] + cmd,
         check=True,
         stdout=subprocess.PIPE,
         text=True
