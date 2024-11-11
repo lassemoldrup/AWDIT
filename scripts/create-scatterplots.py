@@ -4,15 +4,16 @@ import csv
 from datetime import datetime
 
 if __name__ == '__main__':
-    if len(sys.argv) < 2:
-        print('usage: python scripts/create-scatterplots.py path/to/results')
+    if len(sys.argv) < 3:
+        print('usage: python scripts/create-scatterplots.py name path/to/results')
         exit(1)
-    path = sys.argv[1]
+    name = sys.argv[1]
+    path = sys.argv[2]
 
     date = datetime.now().strftime('%Y-%m-%d')
 
     for isolation in ['rc', 'ra', 'cc']:
-        with open(os.path.join(path, f'{date}-time-{isolation}.csv'), 'w', newline='') as csvfile:
+        with open(os.path.join(path, f'{date}-{name}-{isolation}.csv'), 'w', newline='') as csvfile:
             writer = csv.writer(csvfile)
             headers = ['database', 'script', 'txns', 'sessions', 'events', 'keys']
             if isolation == 'cc':
