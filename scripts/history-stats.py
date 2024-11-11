@@ -35,16 +35,19 @@ def convert_session_entry(in_path, out_path, entry):
     file_prefix = f'{date}-{db}-{script}-t{txns}'
     with open(os.path.join(out_path, f'{file_prefix}-stats.csv'), 'a', newline='') as csvfile:
         writer = csv.writer(csvfile)
-        writer.writerow([threads, stats['num_transactions'], stats['num_events'], stats['num_keys']])
+        writer.writerow([txns, stats['num_transactions'], threads, stats['num_events'], stats['num_keys']])
 
-def sort_results(results_path):
+def sort_results(results_path, sort_key):
     for entry in os.listdir(results_path):
+        if not entry.endswith('-stats.csv'):
+            continue
+
         with open(os.path.join(results_path, entry), 'r') as csvfile:
             reader = csv.reader(csvfile)
             rows = list(reader)
             headers = rows[0]
             rows = rows[1:]
-            rows.sort(key=lambda x: int(x[0]))
+            rows.sort(key=lambda row: int(row[sort_key]))
         with open(os.path.join(results_path, entry), 'w', newline='') as csvfile:
             writer = csv.writer(csvfile)
             writer.writerow(headers)
@@ -58,7 +61,7 @@ def convert_txn_series(in_path, out_path):
         if (db, script, threads) in headers:
             continue
         file_prefix = f'{date}-{db}-{script}-s{threads}'
-        with open(os.path.join(out_path, f'{file_prefix}-stats.csv'), 'a', newline='') as csvfile:
+        with open(os.path.join(out_path, f'{file_prefix}-stats.csv'), 'w', newline='') as csvfile:
             writer = csv.writer(csvfile)
             writer.writerow(['txns', 'actual_txns', 'sessions', 'events', 'keys'])
             headers.add((db, script, threads))
@@ -66,7 +69,7 @@ def convert_txn_series(in_path, out_path):
     with ThreadPoolExecutor() as executor:
         for entry in entries:
             executor.submit(convert_txn_entry, in_path, out_path, entry)
-    sort_results(out_path)
+    sort_results(out_path, 0)
 
 def convert_session_series(in_path, out_path):
     entries = list(os.listdir(in_path))
@@ -76,15 +79,15 @@ def convert_session_series(in_path, out_path):
         if (db, script, txns) in headers:
             continue
         file_prefix = f'{date}-{db}-{script}-t{txns}'
-        with open(os.path.join(out_path, f'{file_prefix}-stats.csv'), 'a', newline='') as csvfile:
+        with open(os.path.join(out_path, f'{file_prefix}-stats.csv'), 'w', newline='') as csvfile:
             writer = csv.writer(csvfile)
-            writer.writerow(['sessions', 'actual_txns', 'events', 'keys'])
+            writer.writerow(['txns', 'actual_txns', 'sessions', 'events', 'keys'])
             headers.add((db, script, txns))
 
     with ThreadPoolExecutor() as executor:
         for entry in entries:
             executor.submit(convert_session_entry, in_path, out_path, entry)
-    sort_results(out_path)
+    sort_results(out_path, 2)
 
 if __name__ == '__main__':
     if len(sys.argv) < 4:
