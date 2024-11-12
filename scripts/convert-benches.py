@@ -17,12 +17,12 @@ def convert_entry(in_path, out_path, entry):
     try:
         if not os.path.exists(plume_path):
             if len(fix_flag) == 0:
-                print(f'Running: cargo run --release -- convert -m -t plume {full_path} {plume_path}')
+                print(f'Running: target/release/consistency convert -m -t plume {full_path} {plume_path}')
             else:
-                print(f'Running: cargo run --release -- convert -m -t plume -F {full_path} {plume_path}')
+                print(f'Running: target/release/consistency convert -m -t plume -F {full_path} {plume_path}')
 
             result = subprocess.run(
-                ['cargo', 'run', '--release', '--', 'convert', '-m', '-t', 'plume'] + fix_flag + [full_path, plume_path],
+                ['target/release/consistency', 'convert', '-m', '-t', 'plume'] + fix_flag + [full_path, plume_path],
                 check=True,
                 capture_output=True,
                 text=True
@@ -33,12 +33,12 @@ def convert_entry(in_path, out_path, entry):
 
         if not os.path.exists(dbcop_path):
             if len(fix_flag) == 0:
-                print(f'Running: cargo run --release -- convert -m -t dbcop {full_path} {dbcop_path}')
+                print(f'Running: target/release/consistency convert -m -t dbcop {full_path} {dbcop_path}')
             else:
-                print(f'Running: cargo run --release -- convert -m -t dbcop -F {full_path} {dbcop_path}')
+                print(f'Running: target/release/consistency convert -m -t dbcop -F {full_path} {dbcop_path}')
 
             result = subprocess.run(
-                ['cargo', 'run', '--release', '--', 'convert', '-m', '-t', 'dbcop'] + fix_flag + [full_path, dbcop_path],
+                ['target/release/consistency', 'convert', '-m', '-t', 'dbcop'] + fix_flag + [full_path, dbcop_path],
                 check=True,
                 capture_output=True,
                 text=True
@@ -47,7 +47,7 @@ def convert_entry(in_path, out_path, entry):
         else:
             print(f'Note: skipping {dbcop_path}')
     except subprocess.CalledProcessError as e:
-        print(f'Error running cargo in {entry}: {e.stderr}')
+        print(f'Error running tool in {entry}: {e.stderr}')
         exit(1)
 
 def convert_all(in_path, out_path):
@@ -62,5 +62,11 @@ if __name__ == '__main__':
         exit(1)
     in_path = sys.argv[1]
     out_path = sys.argv[2]
+
+    print('Building our tool..')
+    subprocess.run(
+        ['cargo', 'build', '--release'],
+        check=True
+    )
 
     convert_all(in_path, out_path)

@@ -15,7 +15,7 @@ if __name__ == '__main__':
     for isolation in ['rc', 'ra', 'cc']:
         time_headers = None
         res_headers = None
-        headers = ['database', 'script', 'txns', 'sessions', 'events', 'keys']
+        headers = ['database', 'script', 'txns', 'sessions', 'events', 'keys', 'ops_per_txn']
         
         times = {}
         results = {}
@@ -39,7 +39,7 @@ if __name__ == '__main__':
                     results[entry.removesuffix('-res.csv')] = [row[1:] for row in rows[1:]]
                 elif entry.endswith('-stats.csv'):
                     elems = entry.split('-')[:-1]
-                    elems.insert(-1, isolation)
+                    elems.insert(5, isolation)
                     stats['-'.join(elems)] = [elems[3:5] + row[1:] for row in rows[1:]]
         
         if time_headers is None or res_headers is None:

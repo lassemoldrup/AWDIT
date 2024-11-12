@@ -180,7 +180,7 @@ def txn_series(in_path, results_path, isolation, tools):
         with open(os.path.join(results_path, f'{file_prefix}-res.csv'), 'a', newline='') as csvfile:
             writer = csv.writer(csvfile)
             if (db, script, threads) not in headers:
-                writer.writerow(['txns'] + tools)
+                writer.writerow(['txns'] + [tool + ' (res)' for tool in tools])
             writer.writerow([txns] + results)
 
         headers.add((db, script, threads))
@@ -211,16 +211,46 @@ def session_series(in_path, results_path, isolation, tools):
         with open(os.path.join(results_path, f'{file_prefix}-res.csv'), 'a', newline='') as csvfile:
             writer = csv.writer(csvfile)
             if (db, script, txns) not in headers:
-                writer.writerow(['sessions'] + tools)
+                writer.writerow(['sessions'] + [tool + ' (res)' for tool in tools])
             writer.writerow([threads] + results)
 
         headers.add((db, script, txns))
+
+def ops_series(in_path, results_path, isolation, tools):
+    headers = set()
+    entries = list(os.listdir(in_path))
+    for i, entry in enumerate(entries):
+        print(f'{isolation} {i+1}/{len(entries)}: Running on {entry}')
+
+        _, db, script, _, ops, txns, threads = entry.split('-')
+        times, mems, results = run_tools(os.path.join(in_path, entry), isolation, txns, tools)
+        file_prefix = f'{date}-{db}-{script}-{isolation}-s{threads}-t{txns}'
+
+        with open(os.path.join(results_path, f'{file_prefix}-time.csv'), 'a', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            if (db, script, threads, txns) not in headers:
+                writer.writerow(['ops_per_txn'] + [tool + ' (s)' for tool in tools])
+            writer.writerow([ops] + times)
+
+        with open(os.path.join(results_path, f'{file_prefix}-mem.csv'), 'a', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            if (db, script, threads, txns) not in headers:
+                    writer.writerow(['ops_per_txn'] + [tool + ' (MiB)' for tool in tools])
+            writer.writerow([ops] + mems)
         
+        with open(os.path.join(results_path, f'{file_prefix}-res.csv'), 'a', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            if (db, script, threads, txns) not in headers:
+                writer.writerow(['ops_per_txn'] + [tool + ' (res)' for tool in tools])
+            writer.writerow([ops] + results)
+
+        headers.add((db, script, threads, txns))
+
 if __name__ == '__main__':
     if len(sys.argv) < 4:
-        print('usage: python scripts/run-benches.py <txn OR sess> path/to/benches results/path')
+        print('usage: python scripts/run-benches.py <txn OR sess OR ops> path/to/benches results/path')
         exit(1)
-    txn_sess = sys.argv[1]
+    txn_sess_ops = sys.argv[1]
     in_path = sys.argv[2]
     results_path = sys.argv[3]
 
@@ -235,19 +265,19 @@ if __name__ == '__main__':
         check=True
     )
 
-    tools = ['ours', 'plume', 'polysi', 'dbcop', 'causalc+', 'mono']
-    if txn_sess == 'txn':
-        isolation = 'cc'
-        txn_series(in_path, results_path, isolation, tools)
+    # tools = ['ours', 'plume', 'polysi', 'dbcop', 'causalc+', 'mono']
+    tools = ['ours', 'plume']
+    if txn_sess_ops == 'txn':
+        for isolation in ['rc', 'ra', 'cc']:
+            txn_series(in_path, results_path, isolation, tools)
         sort_results(results_path)
-        # for isolation in ['rc', 'ra', 'cc']:
-        #     if isolation == 'cc':
-        #         tools.append('dbcop')
-        #     txn_series(in_path, results_path, isolation, tools)
-        # sort_results(results_path)
-    elif txn_sess == 'sess':
+    elif txn_sess_ops == 'sess':
         for isolation in ['rc', 'ra', 'cc']:
             session_series(in_path, results_path, isolation, tools)
+        sort_results(results_path)
+    elif txn_sess_ops == 'ops':
+        for isolation in ['rc', 'ra', 'cc']:
+            ops_series(in_path, results_path, isolation, tools)
         sort_results(results_path)
     else:
         print('The first argument should be either `txn` or `sess`')
