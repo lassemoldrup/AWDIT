@@ -4,7 +4,7 @@ import sys
 import csv
 from datetime import datetime
 
-time_limit = '7200' # seconds
+time_limit = '600' # seconds
 mem_limit = str(55*10**9) # bytes
 
 date = datetime.now().strftime('%Y-%m-%d')
@@ -63,6 +63,19 @@ def run_plume(history, isolation):
                     err_file.write(f'Inconsistent. Plume ({isolation}): {history}\n')
     return time, memory, result
 
+def run_polysi(history):
+    time, memory, _ = run_benchexec(['java', '-jar', 'tools/PolySI/PolySI-1.0.0-SNAPSHOT.jar', 'audit', '-t=TEXT', os.path.join(history, 'plume/history.txt')])
+    result = 'N/A'
+    with open('output.log', 'r') as output:
+        for line in output:
+            if line.startswith('[[[[ ACCEPT ]]]]'):
+                result = 'C'
+            elif line.startswith('[[[[ REJECT ]]]]'):
+                result = 'I'
+                with open('errors.log', 'a') as err_file:
+                    err_file.write(f'Inconsistent. PolySI: {history}\n')
+    return time, memory, result
+
 def run_dbcop(history):
     time, memory, exitcode = run_benchexec(['tools/dbcop/target/release/dbcop', 'verify', '--cons', 'cc', '--out_dir', 'dbcop-out', '--ver_dir', os.path.join(history, 'dbcop')])
     result = 'N/A'
@@ -74,7 +87,33 @@ def run_dbcop(history):
             err_file.write(f'Inconsistent. DBCop: {history}\n')
     return time, memory, result
 
-def run_all_algs(history, isolation, txns, tools):
+def run_causalc_plus(history):
+    time, memory, _ = run_benchexec(['python3', 'tools/CausalC+/clingo_txn.py', os.path.join(history, 'plume/history.txt')])
+    result = 'N/A'
+    with open('output.log', 'r') as output:
+        for line in output:
+            if line.startswith('ACCEPT'):
+                result = 'C'
+            elif line.startswith('REJECT'):
+                result = 'I'
+                with open('errors.log', 'a') as err_file:
+                    err_file.write(f'Inconsistent. CausalC+: {history}\n')
+    return time, memory, result
+
+def run_mono(history):
+    time, memory, _ = run_benchexec(['python3', 'tools/mono/run_mono_txn.py', os.path.join(history, 'plume/history.txt')])
+    result = 'N/A'
+    with open('output.log', 'r') as output:
+        for line in output:
+            if line.startswith('ACCEPT'):
+                result = 'C'
+            elif line.startswith('REJECT'):
+                result = 'I'
+                with open('errors.log', 'a') as err_file:
+                    err_file.write(f'Inconsistent. TCC-Mono: {history}\n')
+    return time, memory, result
+
+def run_tools(history, isolation, txns, tools):
     ours_iso_map = {'rc': 'read-committed', 'ra': 'read-atomic', 'cc': 'causal'}
     plume_iso_map = {'rc': 'RC', 'ra': 'RA', 'cc': 'TCC'}
     times = []
@@ -86,10 +125,14 @@ def run_all_algs(history, isolation, txns, tools):
             time, mem, res = run_ours(history, ours_iso_map[isolation])
         elif tool == 'plume':
             time, mem, res = run_plume(history, plume_iso_map[isolation])
-        elif tool == 'dbcop' and int(txns) <= 5000:
-            time, mem, res = run_dbcop(history)
+        elif tool == 'polysi':
+            time, mem, res = run_polysi(history)
         elif tool == 'dbcop':
-            time, mem, res = 'DNR', 'DNR', 'DNR'
+            time, mem, res = run_dbcop(history)
+        elif tool == 'causalc+':
+            time, mem, res = run_causalc_plus(history)
+        elif tool == 'mono':
+            time, mem, res = run_mono(history)
         else:
             print('Unrecognized tool:', tool)
             exit(1)
@@ -119,7 +162,7 @@ def txn_series(in_path, results_path, isolation, tools):
         print(f'{isolation} {i+1}/{len(entries)}: Running on {entry}')
 
         _, db, script, _, _, txns, threads = entry.split('-')
-        times, mems, results = run_all_algs(os.path.join(in_path, entry), isolation, txns, tools)
+        times, mems, results = run_tools(os.path.join(in_path, entry), isolation, txns, tools)
         file_prefix = f'{date}-{db}-{script}-{isolation}-s{threads}'
 
         with open(os.path.join(results_path, f'{file_prefix}-time.csv'), 'a', newline='') as csvfile:
@@ -150,7 +193,7 @@ def session_series(in_path, results_path, isolation, tools):
         print(f'{isolation} {i+1}/{len(entries)}: Running on {entry}')
 
         _, db, script, _, _, txns, threads = entry.split('-')
-        times, mems, results = run_all_algs(os.path.join(in_path, entry), isolation, txns, tools)
+        times, mems, results = run_tools(os.path.join(in_path, entry), isolation, txns, tools)
         file_prefix = f'{date}-{db}-{script}-{isolation}-t{txns}'
 
         with open(os.path.join(results_path, f'{file_prefix}-time.csv'), 'a', newline='') as csvfile:
@@ -192,14 +235,16 @@ if __name__ == '__main__':
         check=True
     )
 
-    tools = ['ours'] #['ours', 'plume']
-
+    tools = ['ours', 'plume', 'polysi', 'dbcop', 'causalc+', 'mono']
     if txn_sess == 'txn':
-        for isolation in ['rc', 'ra', 'cc']:
-            # if isolation == 'cc':
-            #     tools.append('dbcop')
-            txn_series(in_path, results_path, isolation, tools)
+        isolation = 'cc'
+        txn_series(in_path, results_path, isolation, tools)
         sort_results(results_path)
+        # for isolation in ['rc', 'ra', 'cc']:
+        #     if isolation == 'cc':
+        #         tools.append('dbcop')
+        #     txn_series(in_path, results_path, isolation, tools)
+        # sort_results(results_path)
     elif txn_sess == 'sess':
         for isolation in ['rc', 'ra', 'cc']:
             session_series(in_path, results_path, isolation, tools)
