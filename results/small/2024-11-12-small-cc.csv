@@ -1,4 +1,4 @@
-database,script,txns,sessions,events,keys,ours (s),plume (s),polysi (s),dbcop (s),causalc+ (s),mono (s),ours,plume,polysi,dbcop,causalc+,mono
+database,script,txns,sessions,events,keys,ours (s),plume (s),polysi (s),dbcop (s),causalc+ (s),mono (s),ours (res),plume (res),polysi (res),dbcop (res),causalc+ (res),mono (res)
 cockroachdb,rubis,1006,50,8376,3183,0.024703,1.107008,4.06012,0.232254,1.990727,0.188446,C,C,C,C,C,C
 cockroachdb,rubis,2011,50,15807,5271,0.023684,1.473974,8.299615,7.592091,68.415924,0.617164,C,C,C,C,C,C
 cockroachdb,rubis,4025,50,28966,8170,0.063754,2.137301,12.357912,211.802141,600,2.984966,C,C,C,C,N/A,C
