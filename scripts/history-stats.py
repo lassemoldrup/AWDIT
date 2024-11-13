@@ -71,8 +71,8 @@ def sess_file_prefix(entry):
     return f'{date}-{db}-{script}-t{txn}'
 
 def ops_file_prefix(entry):
-    _, db, script, _, _, txn, threads = entry.split('-')
-    return f'{date}-{db}-{script}-s{threads}-t{txn}'
+    _, db, script, _, _, _, threads = entry.split('-')
+    return f'{date}-{db}-{script}-s{threads}'
 
 def convert_txn_series(in_path, out_path):
     convert_series(in_path, out_path, txn_file_prefix)

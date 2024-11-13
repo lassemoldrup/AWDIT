@@ -224,27 +224,27 @@ def ops_series(in_path, results_path, isolation, tools):
 
         _, db, script, _, ops, txns, threads = entry.split('-')
         times, mems, results = run_tools(os.path.join(in_path, entry), isolation, txns, tools)
-        file_prefix = f'{date}-{db}-{script}-{isolation}-s{threads}-t{txns}'
+        file_prefix = f'{date}-{db}-{script}-{isolation}-s{threads}'
 
         with open(os.path.join(results_path, f'{file_prefix}-time.csv'), 'a', newline='') as csvfile:
             writer = csv.writer(csvfile)
-            if (db, script, threads, txns) not in headers:
+            if (db, script, threads) not in headers:
                 writer.writerow(['ops_per_txn'] + [tool + ' (s)' for tool in tools])
             writer.writerow([ops] + times)
 
         with open(os.path.join(results_path, f'{file_prefix}-mem.csv'), 'a', newline='') as csvfile:
             writer = csv.writer(csvfile)
-            if (db, script, threads, txns) not in headers:
+            if (db, script, threads) not in headers:
                     writer.writerow(['ops_per_txn'] + [tool + ' (MiB)' for tool in tools])
             writer.writerow([ops] + mems)
         
         with open(os.path.join(results_path, f'{file_prefix}-res.csv'), 'a', newline='') as csvfile:
             writer = csv.writer(csvfile)
-            if (db, script, threads, txns) not in headers:
+            if (db, script, threads) not in headers:
                 writer.writerow(['ops_per_txn'] + [tool + ' (res)' for tool in tools])
             writer.writerow([ops] + results)
 
-        headers.add((db, script, threads, txns))
+        headers.add((db, script, threads))
 
 if __name__ == '__main__':
     if len(sys.argv) < 4:
