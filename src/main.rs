@@ -34,7 +34,7 @@ enum Command {
         #[clap(short, long, default_value_t = ReportMode::Full)]
         report_mode: ReportMode,
     },
-    /// Convert a Plume/Cobra/DBCop history to a Plume/DBCop history
+    /// Convert a Plume/Cobra/DBCop history to a Plume/DBCop/Test history
     Convert {
         #[arg(required = true)]
         from_path: PathBuf,
@@ -71,6 +71,10 @@ struct GenerateArgs {
     events: usize,
     #[clap(short, long, default_value_t = IsolationLevel::Causal)]
     isolation: IsolationLevel,
+    #[clap(short, long, default_value_t = HistoryFormat::Plume)]
+    format: HistoryFormat,
+    #[arg(required = true)]
+    path: PathBuf,
     #[clap(short, long, default_value_t = 0.8)]
     read_ratio: f64,
     #[clap(short, long, default_value_t = 5.)]
@@ -101,7 +105,7 @@ enum IsolationLevel {
     Causal,
 }
 
-#[derive(Clone, strum::EnumString, strum::Display)]
+#[derive(Clone, strum::EnumString, strum::Display, PartialEq, Eq)]
 #[strum(serialize_all = "kebab-case")]
 enum HistoryFormat {
     Plume,
@@ -109,6 +113,7 @@ enum HistoryFormat {
     #[cfg(feature = "dbcop")]
     #[strum(serialize = "dbcop")]
     DbCop,
+    Test,
 }
 
 #[derive(Clone, ValueEnum, strum::Display)]
@@ -372,7 +377,7 @@ impl PartialHistory {
         }
 
         self.sessions.retain(|s| !s.is_empty());
-        self.sessions.shuffle(&mut rng);
+        self.sessions[..non_init_sessions].shuffle(&mut rng);
         History {
             sessions: self.sessions,
             aborted_writes: FxHashSet::default(),
@@ -477,7 +482,7 @@ impl PartialHistory {
         }
 
         self.sessions.retain(|s| !s.is_empty());
-        self.sessions.shuffle(&mut rng);
+        self.sessions[..non_init_sessions].shuffle(&mut rng);
         History {
             sessions: self.sessions,
             aborted_writes: FxHashSet::default(),
@@ -530,7 +535,7 @@ impl PartialHistory {
         }
 
         self.sessions.retain(|s| !s.is_empty());
-        self.sessions.shuffle(&mut rng);
+        self.sessions[..non_init_sessions].shuffle(&mut rng);
         History {
             sessions: self.sessions,
             aborted_writes: FxHashSet::default(),
@@ -544,12 +549,33 @@ fn main() -> anyhow::Result<()> {
         Command::Generate(args) => {
             // app._find_inconsistent();
             let history = PartialHistory::generate(&args);
-            let history = match args.isolation {
+            let mut history = match args.isolation {
                 IsolationLevel::ReadCommitted => history.into_read_committed_history(),
                 IsolationLevel::ReadAtomic => history.into_read_atomic_history(),
                 IsolationLevel::Causal => history.into_causal_history(),
             };
-            println!("{history}");
+
+            match args.format {
+                HistoryFormat::Plume | HistoryFormat::DbCop => {
+                    // Remove the init session
+                    history.sessions.pop();
+                }
+                _ => {}
+            }
+
+            match args.format {
+                HistoryFormat::Plume => history
+                    .serialize_plume_history(args.path)
+                    .context("Failed to write Plume history")?,
+                HistoryFormat::Cobra => panic!("Cannot convert to Cobra history"),
+                #[cfg(feature = "dbcop")]
+                HistoryFormat::DbCop => history
+                    .serialize_dbcop_history(args.path)
+                    .context("Failed to write DBCop history")?,
+                HistoryFormat::Test => history
+                    .serialize_test_history(args.path)
+                    .context("Failed to write test history")?,
+            }
         }
         Command::Check {
             isolation,
@@ -566,6 +592,8 @@ fn main() -> anyhow::Result<()> {
                 #[cfg(feature = "dbcop")]
                 HistoryFormat::DbCop => History::parse_dbcop_history(path)
                     .context("Failed to parse path as Cobra history")?,
+                HistoryFormat::Test => History::parse_test_history(path)
+                    .context("Failed to parse path as test history")?,
             };
 
             let parsing_elapsed = parsing_start.elapsed();
@@ -614,12 +642,13 @@ fn main() -> anyhow::Result<()> {
                 #[cfg(feature = "dbcop")]
                 HistoryFormat::DbCop => History::parse_dbcop_history(&from_path)
                     .context("Failed to parse path as Cobra history")?,
+                HistoryFormat::Test => panic!("Cannot convert from test history"),
             };
             match from_format {
-                HistoryFormat::Plume | HistoryFormat::Cobra => {
+                HistoryFormat::Plume | HistoryFormat::Cobra if to_format != HistoryFormat::Test => {
                     history.sessions.pop();
                 }
-                HistoryFormat::DbCop => {}
+                _ => {}
             }
             if max_63_bits {
                 history.strip_64th_bit();
@@ -637,6 +666,9 @@ fn main() -> anyhow::Result<()> {
                 HistoryFormat::DbCop => history
                     .serialize_dbcop_history(&to_path)
                     .context("Failed to write DBCop history")?,
+                HistoryFormat::Test => history
+                    .serialize_test_history(&to_path)
+                    .context("Failed to write test history")?,
             }
         }
         Command::Stats {
@@ -652,6 +684,8 @@ fn main() -> anyhow::Result<()> {
                 #[cfg(feature = "dbcop")]
                 HistoryFormat::DbCop => History::parse_dbcop_history(&path)
                     .context("Failed to parse path as Cobra history")?,
+                HistoryFormat::Test => History::parse_test_history(&path)
+                    .context("Failed to parse path as test history")?,
             };
             if json_output {
                 println!("{}", serde_json::to_string_pretty(&history.stats())?);

@@ -272,6 +272,7 @@ impl History {
         let dbcop_sessions = history.get_data();
         let mut sessions = Vec::with_capacity(dbcop_sessions.len());
         let mut aborted_writes = FxHashSet::default();
+        let mut keys = FxHashSet::default();
         for dbcop_session in dbcop_sessions {
             let mut session = Vec::with_capacity(dbcop_session.len());
             for dbcop_txn in dbcop_session {
@@ -281,6 +282,7 @@ impl History {
                         key: Key(event.variable),
                         value: Value(event.value),
                     };
+                    keys.insert(kv.key);
                     if event.write {
                         if !event.success {
                             aborted_writes.insert(kv);
@@ -298,6 +300,17 @@ impl History {
             }
             sessions.push(session);
         }
+
+        // TODO: maybe handle this implicitly?
+        let mut init_transaction = Transaction::new();
+        for key in keys {
+            init_transaction.push(Event::Write(KeyValuePair {
+                key,
+                value: Value(0),
+            }));
+        }
+        sessions.push(vec![init_transaction]);
+
         History {
             sessions,
             aborted_writes,
@@ -368,6 +381,59 @@ impl History {
             dbcop_sessions,
         )
     }
+
+    pub fn serialize_test_history(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> Result<(), SerializeTestHistoryError> {
+        let mut writer = File::create(path)?;
+        write!(&mut writer, "{}", self)?;
+        Ok(())
+    }
+
+    pub fn parse_test_history(path: impl AsRef<Path>) -> io::Result<Self> {
+        let contents = fs::read_to_string(path)?;
+        let mut sessions = Vec::new();
+        for session in contents.split('=') {
+            let session = session.trim();
+            if session.is_empty() {
+                continue;
+            }
+
+            let mut transactions = Vec::new();
+            for transaction in session.split('-') {
+                let transaction = transaction.trim();
+                if transaction.is_empty() {
+                    continue;
+                }
+
+                let mut events = Vec::new();
+                for event in transaction.lines() {
+                    let event = event.trim();
+                    if event.is_empty() {
+                        continue;
+                    }
+
+                    let mut parts = event.split_whitespace();
+                    let event_type = parts.next().unwrap();
+                    let key = Key(parts.next().unwrap().parse().unwrap());
+                    let value = Value(parts.next().unwrap().parse().unwrap());
+                    let event = match event_type {
+                        "r" => Event::Read(KeyValuePair { key, value }),
+                        "w" => Event::Write(KeyValuePair { key, value }),
+                        _ => panic!("Invalid event type"),
+                    };
+                    events.push(event);
+                }
+                transactions.push(crate::Transaction { events });
+            }
+            sessions.push(transactions);
+        }
+        Ok(Self {
+            sessions,
+            aborted_writes: FxHashSet::default(),
+        })
+    }
 }
 
 struct PlumeHistoryDisplay<'h> {
@@ -415,6 +481,14 @@ pub enum ParseHistoryError {
     #[cfg(feature = "dbcop")]
     #[error("File did not match DBCop format")]
     InvalidDbCopFormat,
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum SerializeTestHistoryError {
+    #[error("{0}")]
+    Io(#[from] io::Error),
+    #[error("Path is not a file")]
+    PathError,
 }
 
 #[cfg(feature = "dbcop")]

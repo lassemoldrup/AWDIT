@@ -1319,62 +1319,13 @@ impl Display for ViolatingCycle {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-
-    use rustc_hash::FxHashSet;
     use test_generator::test_resources;
 
-    use crate::{
-        ConsistencyReport, Event, History, Key, KeyValuePair, Value, WeakestViolationReport,
-    };
-
-    fn parse_test_history(contents: &str) -> History {
-        let mut sessions = Vec::new();
-        for session in contents.split('=') {
-            let session = session.trim();
-            if session.is_empty() {
-                continue;
-            }
-
-            let mut transactions = Vec::new();
-            for transaction in session.split('-') {
-                let transaction = transaction.trim();
-                if transaction.is_empty() {
-                    continue;
-                }
-
-                let mut events = Vec::new();
-                for event in transaction.lines() {
-                    let event = event.trim();
-                    if event.is_empty() {
-                        continue;
-                    }
-
-                    let mut parts = event.split_whitespace();
-                    let event_type = parts.next().unwrap();
-                    let key = Key(parts.next().unwrap().parse().unwrap());
-                    let value = Value(parts.next().unwrap().parse().unwrap());
-                    let event = match event_type {
-                        "r" => Event::Read(KeyValuePair { key, value }),
-                        "w" => Event::Write(KeyValuePair { key, value }),
-                        _ => panic!("Invalid event type"),
-                    };
-                    events.push(event);
-                }
-                transactions.push(crate::Transaction { events });
-            }
-            sessions.push(transactions);
-        }
-        History {
-            sessions,
-            aborted_writes: FxHashSet::default(),
-        }
-    }
+    use crate::{ConsistencyReport, History, WeakestViolationReport};
 
     #[test_resources("res/tests/causal/**/*.txt")]
     fn test_causal(file: &str) {
-        let contents = fs::read_to_string(file).unwrap();
-        let history = parse_test_history(&contents);
+        let history = History::parse_test_history(file).unwrap();
         let mut checker = history.checker::<WeakestViolationReport>();
         assert!(checker.check_causal().is_success());
         assert!(checker.check_read_atomic().is_success());
@@ -1383,8 +1334,7 @@ mod tests {
 
     #[test_resources("res/tests/read-atomic/**/*.txt")]
     fn test_read_atomic(file: &str) {
-        let contents = fs::read_to_string(file).unwrap();
-        let history = parse_test_history(&contents);
+        let history = History::parse_test_history(file).unwrap();
         let mut checker = history.checker::<WeakestViolationReport>();
         assert!(!checker.check_causal().is_success());
         assert!(checker.check_read_atomic().is_success());
@@ -1393,8 +1343,7 @@ mod tests {
 
     #[test_resources("res/tests/read-committed/**/*.txt")]
     fn test_read_committed(file: &str) {
-        let contents = fs::read_to_string(file).unwrap();
-        let history = parse_test_history(&contents);
+        let history = History::parse_test_history(file).unwrap();
         let mut checker = history.checker::<WeakestViolationReport>();
         assert!(!checker.check_causal().is_success());
         assert!(!checker.check_read_atomic().is_success());
@@ -1403,8 +1352,7 @@ mod tests {
 
     #[test_resources("res/tests/none/**/*.txt")]
     fn test_inconsistent(file: &str) {
-        let contents = fs::read_to_string(file).unwrap();
-        let history = parse_test_history(&contents);
+        let history = History::parse_test_history(file).unwrap();
         let mut checker = history.checker::<WeakestViolationReport>();
         assert!(!checker.check_causal().is_success());
         assert!(!checker.check_read_atomic().is_success());
