@@ -479,6 +479,58 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
         mem::take(&mut self.report)
     }
 
+    pub fn check_causal2(&mut self) -> R {
+        if self.check_read_consistency().is_err() {
+            return mem::take(&mut self.report);
+        }
+        let Ok(graph) = self.infer_graph() else {
+            return mem::take(&mut self.report);
+        };
+
+        let history = self.history;
+        let writes_per_key = history.get_writes_per_key();
+
+        let mut reader_sessions: FxHashMap<TransactionId, FxHashSet<usize>> = FxHashMap::default();
+        for (s_idx, session) in history.sessions.iter().enumerate() {
+            for t_idx in 0..session.len() {
+                for &(writer_tid, _) in &graph.reads[s_idx][t_idx] {
+                    reader_sessions.entry(writer_tid).or_default().insert(s_idx);
+                }
+            }
+        }
+
+        let mut commit_order = PartialCommitOrder::new(&history);
+        let mut hb: FxHashMap<TransactionId, VectorClock> = FxHashMap::default();
+        let dfs_res = graph.dfs(|t3| {
+            let mut t3_vc = VectorClock::new_min(history.sessions.len());
+            for pred in graph.rev_hb_edges(t3) {
+                let Some(pred_vc) = hb.get(&pred) else {
+                    continue;
+                };
+                t3_vc.join(pred_vc);
+                t3_vc.join1(pred.0, pred.1 as isize);
+                let pred_reader_sessions = reader_sessions
+                    .get_mut(&pred)
+                    .expect("should have reader sessions when pred is in hb");
+                pred_reader_sessions.remove(&t3.0);
+                if pred_reader_sessions.is_empty() {
+                    hb.remove(&pred);
+                    reader_sessions.remove(&pred);
+                }
+            }
+            hb.insert(t3, t3_vc);
+        });
+        if let Err(cycle) = dfs_res {
+            self.report
+                .add_violation(ConsistencyViolation::Cycle(cycle));
+            return mem::take(&mut self.report);
+        }
+
+        // Check for cycles in the reverse commit order
+        commit_order.find_cycles(&graph, &mut self.report);
+        mem::take(&mut self.report)
+    }
+
     pub fn check_read_atomic(&mut self) -> R {
         if self.check_read_consistency().is_err() {
             return mem::take(&mut self.report);
