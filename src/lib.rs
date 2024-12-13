@@ -190,7 +190,7 @@ pub struct HistoryChecker<'h, R> {
 }
 
 impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
-    fn check_intra_transactional(&mut self) -> Result<(), ConsistencyViolation> {
+    fn check_read_consistency(&mut self) -> Result<(), ConsistencyViolation> {
         macro_rules! report_violation {
             ($violation:expr) => {
                 self.report.add_violation($violation.clone());
@@ -380,7 +380,7 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
     }
 
     pub fn check_causal(&mut self) -> R {
-        if self.check_intra_transactional().is_err() {
+        if self.check_read_consistency().is_err() {
             return mem::take(&mut self.report);
         }
         let Ok(graph) = self.infer_graph() else {
@@ -480,7 +480,7 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
     }
 
     pub fn check_read_atomic(&mut self) -> R {
-        if self.check_intra_transactional().is_err() {
+        if self.check_read_consistency().is_err() {
             return mem::take(&mut self.report);
         }
         let Ok(graph) = self.infer_graph() else {
@@ -555,7 +555,7 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
     }
 
     pub fn check_read_committed(&mut self) -> R {
-        if self.check_intra_transactional().is_err() {
+        if self.check_read_consistency().is_err() {
             return mem::take(&mut self.report);
         }
         let Ok(graph) = self.infer_graph() else {
@@ -568,13 +568,30 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
         let mut commit_order = PartialCommitOrder::new(&history);
         for (t3_s_idx, session) in graph.reads.iter().enumerate() {
             for (t3_t_idx, t3_writers) in session.iter().enumerate() {
-                let mut earliest_writer_per_loc: FxHashMap<Key, (TransactionId, Value)> =
-                    FxHashMap::default();
+                let mut read_txns = FxHashSet::default();
+                let mut first_txn_reads = FxHashSet::default();
+                for &(t2, kv) in t3_writers {
+                    if read_txns.insert(t2) {
+                        first_txn_reads.insert(kv);
+                    }
+                }
+                // Stores per key the earliest (last seen) two writers and the values read from them
+                let mut earliest_writer_per_loc: FxHashMap<
+                    Key,
+                    (Option<(TransactionId, Value)>, (TransactionId, Value)),
+                > = FxHashMap::default();
                 for &(t2, kv) in t3_writers.iter().rev() {
-                    for (&x, &(t1, value)) in
-                        intersect_map(&earliest_writer_per_loc, &write_sets[t2.0][t2.1])
-                    {
-                        if t1 != t2 {
+                    if first_txn_reads.contains(&kv) {
+                        for (&x, &(w1, w2)) in
+                            intersect_map(&earliest_writer_per_loc, &write_sets[t2.0][t2.1])
+                        {
+                            let (t1, value) = if w2.0 != t2 {
+                                w2
+                            } else if let Some(w1) = w1 {
+                                w1
+                            } else {
+                                continue;
+                            };
                             let t3 = TransactionId(t3_s_idx, t3_t_idx);
                             let kv_x = KeyValuePair { key: x, value };
                             commit_order.add_edge(
@@ -586,7 +603,12 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
                             );
                         }
                     }
-                    earliest_writer_per_loc.insert(kv.key, (t2, kv.value));
+                    earliest_writer_per_loc
+                        .entry(kv.key)
+                        .and_modify(|e| {
+                            *e = (Some(e.1), (t2, kv.value));
+                        })
+                        .or_insert((None, (t2, kv.value)));
                 }
             }
         }
