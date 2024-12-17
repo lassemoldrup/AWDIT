@@ -3,7 +3,7 @@ use std::ops::Index;
 
 use crate::util::Captures;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VectorClock(Box<[isize]>);
 
 impl VectorClock {

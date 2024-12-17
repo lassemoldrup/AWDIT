@@ -489,11 +489,17 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
 
         let history = self.history;
 
-        let mut reader_sessions: FxHashMap<TransactionId, FxHashSet<usize>> = FxHashMap::default();
+        let mut succ_sessions: FxHashMap<TransactionId, FxHashSet<usize>> = FxHashMap::default();
         for (s_idx, session) in history.sessions.iter().enumerate() {
             for t_idx in 0..session.len() {
+                if t_idx < session.len() - 1 {
+                    succ_sessions
+                        .entry(TransactionId(s_idx, t_idx))
+                        .or_default()
+                        .insert(s_idx);
+                }
                 for &(writer_tid, _) in &graph.reads[s_idx][t_idx] {
-                    reader_sessions.entry(writer_tid).or_default().insert(s_idx);
+                    succ_sessions.entry(writer_tid).or_default().insert(s_idx);
                 }
             }
         }
@@ -511,25 +517,20 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
                 };
                 t3_vc.join(pred_vc);
                 t3_vc.join1(pred.0, pred.1 as isize);
-                if pred.0 != t3.0 {
-                    let pred_reader_sessions = reader_sessions
-                        .get_mut(&pred)
-                        .expect("should have reader sessions when pred is in hb");
-                    pred_reader_sessions.remove(&t3.0);
-                    if pred_reader_sessions.is_empty() {
-                        hb.remove(&pred);
-                        reader_sessions.remove(&pred);
-                    }
+                let pred_succ_sessions = succ_sessions.get_mut(&pred).expect("pred is in hb");
+                pred_succ_sessions.remove(&t3.0);
+                if pred_succ_sessions.is_empty() {
+                    hb.remove(&pred);
+                    succ_sessions.remove(&pred);
                 }
             }
-            hb.insert(t3, t3_vc);
 
             let t3_reads = &graph.reads[t3.0][t3.1];
             let t3_read_map = to_read_map(t3_reads);
             let mut prev_writers = FxHashMap::default();
             for &(t1, kv) in t3_reads {
                 for t2_s_idx in 0..history.sessions.len() {
-                    let Ok(last_pred) = usize::try_from(hb[&t3][t2_s_idx]) else {
+                    let Ok(last_pred) = usize::try_from(t3_vc[t2_s_idx]) else {
                         // If -1, no predecessors in t2's session
                         continue;
                     };
@@ -591,9 +592,11 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
                 }
                 prev_writers.insert(t1, kv);
             }
+
             for &x in &write_sets[t3.0][t3.1] {
                 writes_per_key.entry((t3.0, x)).or_default().push(t3.1);
             }
+            hb.insert(t3, t3_vc);
         });
         if let Err(cycle) = dfs_res {
             self.report
@@ -1015,6 +1018,7 @@ enum SearchState {
     Seen,
 }
 
+#[derive(Debug)]
 enum DfsStackEntry {
     Pre(TransactionId),
     Post(TransactionId),
@@ -1041,6 +1045,16 @@ impl Transaction {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TransactionId(pub usize, pub usize);
+
+impl TransactionId {
+    pub fn pred(self) -> Option<Self> {
+        if self.1 > 0 {
+            Some(Self(self.0, self.1 - 1))
+        } else {
+            None
+        }
+    }
+}
 
 impl Display for TransactionId {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
@@ -1174,6 +1188,9 @@ impl WriteReadGraph {
             while let Some(entry) = stack.pop() {
                 match entry {
                     DfsStackEntry::Pre(tid @ TransactionId(s_idx, t_idx)) => {
+                        if search_state[s_idx][t_idx] == SearchState::Seen {
+                            continue;
+                        }
                         search_state[s_idx][t_idx] = SearchState::Marked;
                         stack.push(DfsStackEntry::Post(tid));
 
@@ -1476,6 +1493,7 @@ mod tests {
     fn test_causal(file: &str) {
         let history = History::parse_test_history(file).unwrap();
         let mut checker = history.checker::<WeakestViolationReport>();
+        assert!(checker.check_causal().is_success());
         assert!(checker.check_causal2().is_success());
         assert!(checker.check_read_atomic().is_success());
         assert!(checker.check_read_committed().is_success());
@@ -1485,6 +1503,7 @@ mod tests {
     fn test_read_atomic(file: &str) {
         let history = History::parse_test_history(file).unwrap();
         let mut checker = history.checker::<WeakestViolationReport>();
+        assert!(!checker.check_causal().is_success());
         assert!(!checker.check_causal2().is_success());
         assert!(checker.check_read_atomic().is_success());
         assert!(checker.check_read_committed().is_success());
@@ -1494,6 +1513,7 @@ mod tests {
     fn test_read_committed(file: &str) {
         let history = History::parse_test_history(file).unwrap();
         let mut checker = history.checker::<WeakestViolationReport>();
+        assert!(!checker.check_causal().is_success());
         assert!(!checker.check_causal2().is_success());
         assert!(!checker.check_read_atomic().is_success());
         assert!(checker.check_read_committed().is_success());
@@ -1503,6 +1523,7 @@ mod tests {
     fn test_inconsistent(file: &str) {
         let history = History::parse_test_history(file).unwrap();
         let mut checker = history.checker::<WeakestViolationReport>();
+        assert!(!checker.check_causal().is_success());
         assert!(!checker.check_causal2().is_success());
         assert!(!checker.check_read_atomic().is_success());
         assert!(!checker.check_read_committed().is_success());
