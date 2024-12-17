@@ -409,6 +409,7 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
                     let last_writes: &mut Vec<isize> = last_writes_per_key
                         .entry(kv.key)
                         .or_insert_with(|| vec![-1; history.sessions.len()]);
+                    let writes_per_sess = &writes_per_key[&kv.key];
                     for (t2_s_idx, last_write) in last_writes.iter_mut().enumerate() {
                         let Ok(last_pred) = usize::try_from(hb[t3_s_idx][t3_t_idx][t2_s_idx])
                         else {
@@ -416,7 +417,7 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
                             continue;
                         };
                         // Find the last write to x in t2's session that is less than or equal to last_pred
-                        let writes = &writes_per_key[&kv.key][t2_s_idx];
+                        let writes = &writes_per_sess[t2_s_idx];
                         // TOOD: Test binary search
                         for write_idx in 0.max(*last_write)..writes.len() as isize {
                             match writes[write_idx as usize].cmp(&last_pred) {

@@ -605,7 +605,7 @@ fn main() -> anyhow::Result<()> {
                     match isolation {
                         IsolationLevel::ReadCommitted => checker.check_read_committed(),
                         IsolationLevel::ReadAtomic => checker.check_read_atomic(),
-                        IsolationLevel::Causal => checker.check_causal2(),
+                        IsolationLevel::Causal => checker.check_causal(),
                     }
                 }};
             }
