@@ -401,16 +401,12 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
 
         let mut commit_order = PartialCommitOrder::new(&history);
         for (t3_s_idx, sess_reads) in graph.reads.iter().enumerate() {
-            let mut last_writes_per_key = FxHashMap::default();
             for (t3_t_idx, t3_reads) in sess_reads.iter().enumerate() {
                 let t3_read_map = to_read_map(t3_reads);
                 let mut prev_writers = FxHashMap::default();
                 for &(t1, kv) in t3_reads {
-                    let last_writes: &mut Vec<isize> = last_writes_per_key
-                        .entry(kv.key)
-                        .or_insert_with(|| vec![-1; history.sessions.len()]);
                     let writes_per_sess = &writes_per_key[&kv.key];
-                    for (t2_s_idx, last_write) in last_writes.iter_mut().enumerate() {
+                    for t2_s_idx in 0..history.sessions.len() {
                         let Ok(last_pred) = usize::try_from(hb[t3_s_idx][t3_t_idx][t2_s_idx])
                         else {
                             // If -1, no predecessors in t2's session
@@ -418,56 +414,40 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
                         };
                         // Find the last write to x in t2's session that is less than or equal to last_pred
                         let writes = &writes_per_sess[t2_s_idx];
-                        // TOOD: Test binary search
-                        for write_idx in 0.max(*last_write)..writes.len() as isize {
-                            match writes[write_idx as usize].cmp(&last_pred) {
-                                Ordering::Less => *last_write = write_idx,
-                                Ordering::Equal => {
-                                    *last_write = write_idx;
-                                    break;
-                                }
-                                Ordering::Greater => {
-                                    break;
-                                }
-                            }
+                        let Some(last_write) =
+                            writes.partition_point(|&i| i <= last_pred).checked_sub(1)
+                        else {
+                            continue;
+                        };
+                        let t2_t_idx = writes[last_write];
+                        let t2 = TransactionId(t2_s_idx, t2_t_idx);
+                        if t2 == t1 {
+                            continue;
                         }
-                        if *last_write >= 0 {
-                            let t2_t_idx = writes[*last_write as usize];
-                            let t2 = TransactionId(t2_s_idx, t2_t_idx);
-                            if t2 == t1 {
-                                continue;
-                            }
-                            // TODO: break out early?
-                            // else if hb[t2_s_idx][t2_t_idx][t1.0] >= t1.1 as isize {
-                            // }
-                            let t3 = TransactionId(t3_s_idx, t3_t_idx);
-                            if let Some(&read_y) = prev_writers.get(&t2) {
-                                commit_order.add_edge(
-                                    t1,
-                                    t2,
-                                    t3,
-                                    kv,
-                                    CoJustificationKind::NonMonotonic(read_y),
-                                );
-                            } else if t2_s_idx == t3_s_idx && t2_t_idx < t3_t_idx {
-                                commit_order.add_edge(
-                                    t1,
-                                    t2,
-                                    t3,
-                                    kv,
-                                    CoJustificationKind::FracturedSo,
-                                );
-                            } else if let Some(read_ys) = t3_read_map.get(&t2) {
-                                commit_order.add_edge(
-                                    t1,
-                                    t2,
-                                    t3,
-                                    kv,
-                                    CoJustificationKind::FracturedWr(read_ys[0]),
-                                );
-                            } else {
-                                commit_order.add_edge(t1, t2, t3, kv, CoJustificationKind::Causal);
-                            }
+                        // TODO: break out early?
+                        // else if hb[t2_s_idx][t2_t_idx][t1.0] >= t1.1 as isize {
+                        // }
+                        let t3 = TransactionId(t3_s_idx, t3_t_idx);
+                        if let Some(&read_y) = prev_writers.get(&t2) {
+                            commit_order.add_edge(
+                                t1,
+                                t2,
+                                t3,
+                                kv,
+                                CoJustificationKind::NonMonotonic(read_y),
+                            );
+                        } else if t2_s_idx == t3_s_idx && t2_t_idx < t3_t_idx {
+                            commit_order.add_edge(t1, t2, t3, kv, CoJustificationKind::FracturedSo);
+                        } else if let Some(read_ys) = t3_read_map.get(&t2) {
+                            commit_order.add_edge(
+                                t1,
+                                t2,
+                                t3,
+                                kv,
+                                CoJustificationKind::FracturedWr(read_ys[0]),
+                            );
+                        } else {
+                            commit_order.add_edge(t1, t2, t3, kv, CoJustificationKind::Causal);
                         }
                     }
                     prev_writers.insert(t1, kv);
@@ -508,8 +488,9 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
         let write_sets = history.get_write_sets();
         let mut commit_order = PartialCommitOrder::new(&history);
         let mut hb: FxHashMap<TransactionId, VectorClock> = FxHashMap::default();
-        let mut writes_per_key: FxHashMap<(usize, Key), Vec<usize>> = FxHashMap::default();
-        let mut last_writes_per_key = FxHashMap::default();
+        let mut writes_per_key: FxHashMap<Key, Vec<Vec<usize>>> = FxHashMap::default();
+        // let mut writes_per_key: FxHashMap<(usize, Key), Vec<usize>> = FxHashMap::default();
+
         let dfs_res = graph.dfs(|t3| {
             let mut t3_vc = VectorClock::new_min(history.sessions.len());
             for pred in graph.rev_hb_edges(t3) {
@@ -530,38 +511,23 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
             let t3_read_map = to_read_map(t3_reads);
             let mut prev_writers = FxHashMap::default();
             for &(t1, kv) in t3_reads {
+                let writes_per_sess = &writes_per_key[&kv.key];
                 for t2_s_idx in 0..history.sessions.len() {
                     let Ok(last_pred) = usize::try_from(t3_vc[t2_s_idx]) else {
                         // If -1, no predecessors in t2's session
                         continue;
                     };
                     // Find the last write to x in t2's session that is less than or equal to last_pred
-                    let Some(writes) = writes_per_key.get(&(t2_s_idx, kv.key)) else {
+                    let writes = &writes_per_sess[t2_s_idx];
+                    // let Some(writes) = writes_per_key.get(&(t2_s_idx, kv.key)) else {
+                    //     continue;
+                    // };
+                    let Some(last_write) =
+                        writes.partition_point(|&i| i <= last_pred).checked_sub(1)
+                    else {
                         continue;
                     };
-                    let mut last_write = last_writes_per_key
-                        .get(&(t3.0, t2_s_idx, kv.key))
-                        .copied()
-                        .unwrap_or(-1);
-                    // TOOD: Test binary search
-                    for write_idx in last_write + 1..writes.len() as isize {
-                        match writes[write_idx as usize].cmp(&last_pred) {
-                            Ordering::Less => last_write = write_idx,
-                            Ordering::Equal => {
-                                last_write = write_idx;
-                                break;
-                            }
-                            Ordering::Greater => {
-                                break;
-                            }
-                        }
-                    }
-                    if last_write == -1 {
-                        continue;
-                    }
-                    last_writes_per_key.insert((t3.0, t2_s_idx, kv.key), last_write);
-
-                    let t2_t_idx = writes[last_write as usize];
+                    let t2_t_idx = writes[last_write];
                     let t2 = TransactionId(t2_s_idx, t2_t_idx);
                     if t2 == t1 {
                         continue;
@@ -595,8 +561,14 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
             }
 
             for &x in &write_sets[t3.0][t3.1] {
-                writes_per_key.entry((t3.0, x)).or_default().push(t3.1);
+                let session_writes = &mut writes_per_key
+                    .entry(x)
+                    .or_insert_with(|| vec![vec![]; history.sessions.len()])[t3.0];
+                session_writes.push(t3.1);
             }
+            // for &x in &write_sets[t3.0][t3.1] {
+            //     writes_per_key.entry((t3.0, x)).or_default().push(t3.1);
+            // }
             hb.insert(t3, t3_vc);
         });
         if let Err(cycle) = dfs_res {
