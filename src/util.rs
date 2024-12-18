@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasher, Hash};
 
 use either::Either;
@@ -47,34 +47,4 @@ where
         Either::Right(set.iter().filter_map(|k| map.get_key_value(k)))
     }
     .into_iter()
-}
-
-struct CompactVec<T> {
-    data: VecDeque<T>,
-    start: usize,
-}
-
-impl<T: Default> CompactVec<T> {
-    fn new() -> Self {
-        CompactVec {
-            data: VecDeque::new(),
-            start: 0,
-        }
-    }
-
-    fn insert(&mut self, index: usize, value: T) {
-        if self.data.len() == 0 {
-            self.data.push_back(value);
-            self.start = index;
-        } else if index < self.start {
-            for _ in index + 1..self.start {
-                self.data.push_front(T::default());
-            }
-            self.data.push_front(value);
-            self.start = index;
-        } else if index < self.start + self.data.len() {
-            self.data[index - self.start] = value;
-        } else {
-        }
-    }
 }

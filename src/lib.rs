@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 use std::collections::hash_map::Entry;
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::fmt::{self, Display, Formatter, Write};
 use std::mem;
 
@@ -488,8 +488,7 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
         let write_sets = history.get_write_sets();
         let mut commit_order = PartialCommitOrder::new(&history);
         let mut hb: FxHashMap<TransactionId, VectorClock> = FxHashMap::default();
-        let mut writes_per_key: FxHashMap<Key, Vec<Vec<usize>>> = FxHashMap::default();
-        // let mut writes_per_key: FxHashMap<(usize, Key), Vec<usize>> = FxHashMap::default();
+        let mut writes_per_key: FxHashMap<Key, BTreeMap<usize, Vec<usize>>> = FxHashMap::default();
 
         let dfs_res = graph.dfs(|t3| {
             let mut t3_vc = VectorClock::new_min(history.sessions.len());
@@ -511,17 +510,12 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
             let t3_read_map = to_read_map(t3_reads);
             let mut prev_writers = FxHashMap::default();
             for &(t1, kv) in t3_reads {
-                let writes_per_sess = &writes_per_key[&kv.key];
-                for t2_s_idx in 0..history.sessions.len() {
+                for (&t2_s_idx, writes) in &writes_per_key[&kv.key] {
                     let Ok(last_pred) = usize::try_from(t3_vc[t2_s_idx]) else {
                         // If -1, no predecessors in t2's session
                         continue;
                     };
                     // Find the last write to x in t2's session that is less than or equal to last_pred
-                    let writes = &writes_per_sess[t2_s_idx];
-                    // let Some(writes) = writes_per_key.get(&(t2_s_idx, kv.key)) else {
-                    //     continue;
-                    // };
                     let Some(last_write) =
                         writes.partition_point(|&i| i <= last_pred).checked_sub(1)
                     else {
@@ -561,14 +555,13 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
             }
 
             for &x in &write_sets[t3.0][t3.1] {
-                let session_writes = &mut writes_per_key
+                writes_per_key
                     .entry(x)
-                    .or_insert_with(|| vec![vec![]; history.sessions.len()])[t3.0];
-                session_writes.push(t3.1);
+                    .or_default()
+                    .entry(t3.0)
+                    .or_default()
+                    .push(t3.1);
             }
-            // for &x in &write_sets[t3.0][t3.1] {
-            //     writes_per_key.entry((t3.0, x)).or_default().push(t3.1);
-            // }
             hb.insert(t3, t3_vc);
         });
         if let Err(cycle) = dfs_res {
