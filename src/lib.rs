@@ -11,7 +11,7 @@ use itertools::Itertools;
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde::Serialize;
 use smallvec::SmallVec;
-use util::{intersect_map, Captures, GetTwoMut};
+use util::{intersect_map, Captures};
 use vector_clock::VectorClock;
 
 pub mod fenwick;
@@ -72,30 +72,6 @@ impl History {
             }
         }
         write_sets
-    }
-
-    fn get_writes_per_key(&self) -> FxHashMap<Key, Vec<Vec<usize>>> {
-        let mut writes = FxHashMap::default();
-        for (s_idx, session) in self.sessions.iter().enumerate() {
-            for (t_idx, transaction) in session.iter().enumerate() {
-                for event in transaction.events.iter().rev() {
-                    let &Event::Write(kv) = event else {
-                        continue;
-                    };
-                    let session_writes = &mut writes
-                        .entry(kv.key)
-                        .or_insert_with(|| vec![Vec::new(); self.sessions.len()])[s_idx];
-                    if let Some(&t2_idx) = session_writes.last() {
-                        if t2_idx == t_idx {
-                            // Multiple writes in the same transaction to the same location
-                            continue;
-                        }
-                    }
-                    session_writes.push(t_idx);
-                }
-            }
-        }
-        writes
     }
 
     fn get_po_min_max_map(&self, tid: TransactionId) -> FxHashMap<KeyValuePair, (usize, usize)> {
@@ -387,87 +363,6 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
             return mem::take(&mut self.report);
         };
 
-        let hb = match graph.compute_hb() {
-            Ok(hb) => hb,
-            Err(cycle) => {
-                self.report
-                    .add_violation(ConsistencyViolation::Cycle(cycle));
-                return mem::take(&mut self.report);
-            }
-        };
-
-        let history = self.history;
-        let writes_per_key = history.get_writes_per_key();
-
-        let mut commit_order = PartialCommitOrder::new(&history);
-        for (t3_s_idx, sess_reads) in graph.reads.iter().enumerate() {
-            for (t3_t_idx, t3_reads) in sess_reads.iter().enumerate() {
-                let t3_read_map = to_read_map(t3_reads);
-                let mut prev_writers = FxHashMap::default();
-                for &(t1, kv) in t3_reads {
-                    let writes_per_sess = &writes_per_key[&kv.key];
-                    for t2_s_idx in 0..history.sessions.len() {
-                        let Ok(last_pred) = usize::try_from(hb[t3_s_idx][t3_t_idx][t2_s_idx])
-                        else {
-                            // If -1, no predecessors in t2's session
-                            continue;
-                        };
-                        // Find the last write to x in t2's session that is less than or equal to last_pred
-                        let writes = &writes_per_sess[t2_s_idx];
-                        let Some(last_write) =
-                            writes.partition_point(|&i| i <= last_pred).checked_sub(1)
-                        else {
-                            continue;
-                        };
-                        let t2_t_idx = writes[last_write];
-                        let t2 = TransactionId(t2_s_idx, t2_t_idx);
-                        if t2 == t1 {
-                            continue;
-                        }
-                        // TODO: break out early?
-                        // else if hb[t2_s_idx][t2_t_idx][t1.0] >= t1.1 as isize {
-                        // }
-                        let t3 = TransactionId(t3_s_idx, t3_t_idx);
-                        if let Some(&read_y) = prev_writers.get(&t2) {
-                            commit_order.add_edge(
-                                t1,
-                                t2,
-                                t3,
-                                kv,
-                                CoJustificationKind::NonMonotonic(read_y),
-                            );
-                        } else if t2_s_idx == t3_s_idx && t2_t_idx < t3_t_idx {
-                            commit_order.add_edge(t1, t2, t3, kv, CoJustificationKind::FracturedSo);
-                        } else if let Some(read_ys) = t3_read_map.get(&t2) {
-                            commit_order.add_edge(
-                                t1,
-                                t2,
-                                t3,
-                                kv,
-                                CoJustificationKind::FracturedWr(read_ys[0]),
-                            );
-                        } else {
-                            commit_order.add_edge(t1, t2, t3, kv, CoJustificationKind::Causal);
-                        }
-                    }
-                    prev_writers.insert(t1, kv);
-                }
-            }
-        }
-
-        // Check for cycles in the reverse commit order
-        commit_order.find_cycles(&graph, &mut self.report);
-        mem::take(&mut self.report)
-    }
-
-    pub fn check_causal2(&mut self) -> R {
-        if self.check_read_consistency().is_err() {
-            return mem::take(&mut self.report);
-        }
-        let Ok(graph) = self.infer_graph() else {
-            return mem::take(&mut self.report);
-        };
-
         let history = self.history;
 
         let mut succ_sessions: FxHashMap<TransactionId, FxHashSet<usize>> = FxHashMap::default();
@@ -530,25 +425,17 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
                     // else if hb[t2_s_idx][t2_t_idx][t1.0] >= t1.1 as isize {
                     // }
                     if let Some(&read_y) = prev_writers.get(&t2) {
-                        commit_order.add_edge(
-                            t1,
-                            t2,
-                            t3,
-                            kv,
-                            CoJustificationKind::NonMonotonic(read_y),
-                        );
+                        let justification = CoJustificationKind::NonMonotonic(read_y);
+                        commit_order.add_edge(t1, t2, t3, kv, justification);
                     } else if t2_s_idx == t3.0 && t2_t_idx < t3.1 {
-                        commit_order.add_edge(t1, t2, t3, kv, CoJustificationKind::FracturedSo);
+                        let justification = CoJustificationKind::FracturedSo;
+                        commit_order.add_edge(t1, t2, t3, kv, justification);
                     } else if let Some(read_ys) = t3_read_map.get(&t2) {
-                        commit_order.add_edge(
-                            t1,
-                            t2,
-                            t3,
-                            kv,
-                            CoJustificationKind::FracturedWr(read_ys[0]),
-                        );
+                        let justification = CoJustificationKind::FracturedWr(read_ys[0]);
+                        commit_order.add_edge(t1, t2, t3, kv, justification);
                     } else {
-                        commit_order.add_edge(t1, t2, t3, kv, CoJustificationKind::Causal);
+                        let justification = CoJustificationKind::Causal;
+                        commit_order.add_edge(t1, t2, t3, kv, justification);
                     }
                 }
                 prev_writers.insert(t1, kv);
@@ -621,21 +508,11 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
                     {
                         let read_y = t2_reads[0];
                         if po_min_max_map[&read_y].0 < po_min_max_map[&kv].1 {
-                            commit_order.add_edge(
-                                t1,
-                                t2,
-                                t3,
-                                kv,
-                                CoJustificationKind::NonMonotonic(read_y),
-                            );
+                            let justification = CoJustificationKind::NonMonotonic(read_y);
+                            commit_order.add_edge(t1, t2, t3, kv, justification);
                         } else {
-                            commit_order.add_edge(
-                                t1,
-                                t2,
-                                t3,
-                                kv,
-                                CoJustificationKind::FracturedWr(read_y),
-                            );
+                            let justifcation = CoJustificationKind::FracturedWr(read_y);
+                            commit_order.add_edge(t1, t2, t3, kv, justifcation);
                         }
                     }
                 }
@@ -690,13 +567,8 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
                             };
                             let t3 = TransactionId(t3_s_idx, t3_t_idx);
                             let kv_x = KeyValuePair { key: x, value };
-                            commit_order.add_edge(
-                                t1,
-                                t2,
-                                t3,
-                                kv_x,
-                                CoJustificationKind::NonMonotonic(kv),
-                            );
+                            let justification = CoJustificationKind::NonMonotonic(kv);
+                            commit_order.add_edge(t1, t2, t3, kv_x, justification);
                         }
                     }
                     earliest_writer_per_loc
@@ -1109,33 +981,6 @@ struct WriteReadGraph {
 }
 
 impl WriteReadGraph {
-    fn compute_hb(&self) -> Result<Vec<Vec<VectorClock>>, ViolatingCycle> {
-        let mut hb: Vec<Vec<VectorClock>> = self
-            .reads
-            .iter()
-            .map(|s| vec![VectorClock::new_min(self.reads.len()); s.len()])
-            .collect();
-
-        self.dfs(|TransactionId(s_idx, t_idx)| {
-            if t_idx != 0 {
-                let (pred, succ) = hb[s_idx].get_two_mut(t_idx - 1, t_idx);
-                succ.join(pred);
-                succ.join1(s_idx, t_idx as isize - 1);
-            }
-            for (writer, _) in &self.reads[s_idx][t_idx] {
-                if writer.0 == s_idx {
-                    // Already covered by session predecessor
-                    continue;
-                }
-                let (pred_sess, succ_sess) = hb.get_two_mut(writer.0, s_idx);
-                succ_sess[t_idx].join(&pred_sess[writer.1]);
-                succ_sess[t_idx].join1(writer.0, writer.1 as isize);
-            }
-        })?;
-
-        Ok(hb)
-    }
-
     fn dfs(&self, mut post_action: impl FnMut(TransactionId)) -> Result<(), ViolatingCycle> {
         let mut search_state: Vec<_> = self
             .reads
@@ -1460,7 +1305,6 @@ mod tests {
         let history = History::parse_test_history(file).unwrap();
         let mut checker = history.checker::<WeakestViolationReport>();
         assert!(checker.check_causal().is_success());
-        assert!(checker.check_causal2().is_success());
         assert!(checker.check_read_atomic().is_success());
         assert!(checker.check_read_committed().is_success());
     }
@@ -1470,7 +1314,6 @@ mod tests {
         let history = History::parse_test_history(file).unwrap();
         let mut checker = history.checker::<WeakestViolationReport>();
         assert!(!checker.check_causal().is_success());
-        assert!(!checker.check_causal2().is_success());
         assert!(checker.check_read_atomic().is_success());
         assert!(checker.check_read_committed().is_success());
     }
@@ -1480,7 +1323,6 @@ mod tests {
         let history = History::parse_test_history(file).unwrap();
         let mut checker = history.checker::<WeakestViolationReport>();
         assert!(!checker.check_causal().is_success());
-        assert!(!checker.check_causal2().is_success());
         assert!(!checker.check_read_atomic().is_success());
         assert!(checker.check_read_committed().is_success());
     }
@@ -1490,7 +1332,6 @@ mod tests {
         let history = History::parse_test_history(file).unwrap();
         let mut checker = history.checker::<WeakestViolationReport>();
         assert!(!checker.check_causal().is_success());
-        assert!(!checker.check_causal2().is_success());
         assert!(!checker.check_read_atomic().is_success());
         assert!(!checker.check_read_committed().is_success());
     }
