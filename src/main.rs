@@ -4,11 +4,11 @@ use std::thread;
 use std::time::Instant;
 
 use anyhow::Context;
+use awdit::checker::{ConsistencyReport, FullViolationReport, WeakestViolationReport};
+use awdit::util::{intersect_map, GetTwoMut};
+use awdit::vector_clock::VectorClock;
+use awdit::{Event, History, Key, KeyValuePair, Transaction, TransactionId, Value};
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use consistency::checker::{ConsistencyReport, FullViolationReport, WeakestViolationReport};
-use consistency::util::{intersect_map, GetTwoMut};
-use consistency::vector_clock::VectorClock;
-use consistency::{Event, History, Key, KeyValuePair, Transaction, TransactionId, Value};
 use rand::prelude::*;
 use rand_distr::{Bernoulli, Pareto, Uniform};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -21,7 +21,9 @@ struct App {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Generate a history with the given parameters.
     Generate(GenerateArgs),
+    /// Check a history for consistency violations.
     Check {
         #[clap(short, long, default_value_t = IsolationLevel::Causal)]
         isolation: IsolationLevel,
@@ -31,8 +33,11 @@ enum Command {
         format: HistoryFormat,
         #[clap(short, long, default_value_t = ReportMode::Full)]
         report_mode: ReportMode,
+        /// The size of the stack in MiB, can be increased if stack overflows occur.
+        #[clap(short, long, default_value_t = 32)]
+        stack_size: usize,
     },
-    /// Convert a Plume/Cobra/DBCop history to a Plume/DBCop/Test history
+    /// Convert a Plume/Cobra/DBCop history to a Plume/DBCop/Test history.
     Convert {
         #[arg(required = true)]
         from_path: PathBuf,
@@ -51,6 +56,7 @@ enum Command {
         #[clap(short, long, default_value_t = HistoryFormat::Plume)]
         to_format: HistoryFormat,
     },
+    /// Print statistics about a history.
     Stats {
         #[arg(required = true)]
         path: PathBuf,
@@ -103,7 +109,7 @@ enum IsolationLevel {
     Causal,
 }
 
-#[derive(Clone, strum::EnumString, strum::Display, PartialEq, Eq)]
+#[derive(Clone, ValueEnum, strum::EnumString, strum::Display, PartialEq, Eq)]
 #[strum(serialize_all = "kebab-case")]
 enum HistoryFormat {
     Plume,
@@ -117,7 +123,14 @@ enum HistoryFormat {
 #[derive(Clone, ValueEnum, strum::Display)]
 #[strum(serialize_all = "kebab-case")]
 enum ReportMode {
-    Weakest,
+    /// Only report the first violation found.
+    First,
+    /// Stop after reporting all read consistency violations (continues if none are found).
+    ReadConsistency,
+    /// Stop on causal cycles (continues if none are found).
+    CausalCycles,
+    /// Report as many violations as possible. Note that this does not guarantee that the
+    /// weakest violations present are reported.
     Full,
 }
 
@@ -580,6 +593,7 @@ fn main() -> anyhow::Result<()> {
             path,
             format,
             report_mode,
+            stack_size,
         } => {
             let parsing_start = Instant::now();
             let history = match format {
@@ -612,13 +626,8 @@ fn main() -> anyhow::Result<()> {
             // Spawn a new thread to avoid stack overflow for big histories
             thread::scope(|scope| {
                 thread::Builder::new()
-                    .stack_size(32 * 1024 * 1024)
-                    .spawn_scoped(scope, || match report_mode {
-                        ReportMode::Weakest => {
-                            println!("{}", check_history!(WeakestViolationReport))
-                        }
-                        ReportMode::Full => println!("{}", check_history!(FullViolationReport)),
-                    })
+                    .stack_size(stack_size * 1024 * 1024)
+                    .spawn_scoped(scope, || todo!())
                     .unwrap();
             });
             let checking_elapsed = checking_start.elapsed();

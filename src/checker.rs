@@ -173,22 +173,21 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
                     if writers.len() == 1 {
                         if writers[0].0 == writer_tid {
                             continue;
-                        } else {
-                            let (t2, r2_val) = writers[0];
-                            let violation = ConsistencyViolation::NonRepeatableRead {
-                                reader_tid: TransactionId(s_idx, t_idx),
-                                t1: writer_tid,
-                                t2,
-                                r1: kv,
-                                r2: KeyValuePair {
-                                    key: kv.key,
-                                    value: r2_val,
-                                },
-                            };
-                            self.report.add_violation(violation.clone());
-                            if !R::IS_EXHAUSTIVE {
-                                return Err(violation);
-                            }
+                        }
+                        let (t2, r2_val) = writers[0];
+                        let violation = ConsistencyViolation::NonRepeatableRead {
+                            reader_tid: TransactionId(s_idx, t_idx),
+                            t1: writer_tid,
+                            t2,
+                            r1: kv,
+                            r2: KeyValuePair {
+                                key: kv.key,
+                                value: r2_val,
+                            },
+                        };
+                        self.report.add_violation(violation.clone());
+                        if !R::IS_EXHAUSTIVE {
+                            return Err(violation);
                         }
                     }
                     writers.push((writer_tid, kv.value));
@@ -733,11 +732,11 @@ impl WriteReadGraph {
             let mut stack = vec![DfsStackEntry::Pre(TransactionId(s_idx, t_idx))];
             while let Some(entry) = stack.pop() {
                 match entry {
-                    DfsStackEntry::Pre(tid @ TransactionId(s_idx, t_idx)) => {
-                        if search_state[s_idx][t_idx] == SearchState::Seen {
+                    DfsStackEntry::Pre(tid) => {
+                        if search_state[tid.0][tid.1] == SearchState::Seen {
                             continue;
                         }
-                        search_state[s_idx][t_idx] = SearchState::Marked;
+                        search_state[tid.0][tid.1] = SearchState::Marked;
                         stack.push(DfsStackEntry::Post(tid));
 
                         for tid2 in self.rev_hb_edges(tid) {
