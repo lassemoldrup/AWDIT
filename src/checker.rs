@@ -25,30 +25,32 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
                 for event in &transaction.events {
                     match event {
                         &Event::Read(kv) => {
-                            if let Some(&w_val) = write_map.get(&kv.key) {
-                                if w_val != kv.value {
-                                    let write_kv = KeyValuePair {
-                                        key: kv.key,
-                                        value: w_val,
-                                    };
-                                    let violation = if writes.contains(&kv) {
-                                        ConsistencyViolation::NotMyLastWrite {
-                                            tid,
-                                            read_event: kv,
-                                            last_write: write_kv,
-                                        }
-                                    } else {
-                                        ConsistencyViolation::NotMyOwnWrite {
-                                            tid,
-                                            read_event: kv,
-                                            own_write: write_kv,
-                                        }
-                                    };
-                                    report_violation!(violation);
+                            let Some(&w_val) = write_map.get(&kv.key) else {
+                                inter_txn_reads.insert(kv);
+                                continue;
+                            };
+                            if w_val == kv.value {
+                                continue;
+                            }
+
+                            let write_kv = KeyValuePair {
+                                key: kv.key,
+                                value: w_val,
+                            };
+                            let violation = if writes.contains(&kv) {
+                                ConsistencyViolation::NotMyLastWrite {
+                                    tid,
+                                    read_event: kv,
+                                    last_write: write_kv,
                                 }
                             } else {
-                                inter_txn_reads.insert(kv);
-                            }
+                                ConsistencyViolation::NotMyOwnWrite {
+                                    tid,
+                                    read_event: kv,
+                                    own_write: write_kv,
+                                }
+                            };
+                            report_violation!(violation);
                         }
                         &Event::Write(kv) => {
                             if inter_txn_reads.contains(&kv) {
@@ -87,17 +89,17 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
                 let tid = TransactionId(s_idx, t_idx);
                 let mut txn_writes = FxHashMap::default();
                 for event in &transaction.events {
-                    if let &Event::Write(kv) = event {
-                        if let Some(intermediate) = txn_writes.insert(kv.key, kv.value) {
-                            intermediate_writes.insert(
-                                KeyValuePair {
-                                    key: kv.key,
-                                    value: intermediate,
-                                },
-                                tid,
-                            );
-                        }
-                    }
+                    let &Event::Write(kv) = event else {
+                        continue;
+                    };
+                    let Some(intermediate) = txn_writes.insert(kv.key, kv.value) else {
+                        continue;
+                    };
+                    let intermediate_kv = KeyValuePair {
+                        key: kv.key,
+                        value: intermediate,
+                    };
+                    intermediate_writes.insert(intermediate_kv, tid);
                 }
                 for (key, value) in txn_writes {
                     let kv = KeyValuePair { key, value };
@@ -119,33 +121,35 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
         for (s_idx, session) in history.sessions.iter().enumerate() {
             for (t_idx, transaction) in session.iter().enumerate() {
                 for event in &transaction.events {
-                    if let &Event::Read(kv) = event {
-                        let tid = TransactionId(s_idx, t_idx);
-                        if self.history.aborted_writes.contains(&kv) {
-                            let violation = ConsistencyViolation::AbortedRead { tid, event: kv };
-                            report_violation!(violation);
-                            continue;
-                        }
+                    let &Event::Read(kv) = event else {
+                        continue;
+                    };
 
-                        if let Some(&writer) = value_map.get(&kv) {
-                            if writer != tid {
-                                graph.reads[s_idx][t_idx].push((writer, kv));
-                            }
-                        } else if let Some(&writer) = intermediate_writes.get(&kv) {
-                            if writer != tid {
-                                // if writer == tid, this is NotMyLastWrite
-                                let violation = ConsistencyViolation::IntermediateRead {
-                                    writer_tid: writer,
-                                    reader_tid: tid,
-                                    read_event: kv,
-                                };
-                                report_violation!(violation);
-                                graph.reads[s_idx][t_idx].push((writer, kv));
-                            }
-                        } else {
-                            let violation = ConsistencyViolation::ThinAirRead { tid, event: kv };
-                            report_violation!(violation);
+                    let tid = TransactionId(s_idx, t_idx);
+                    if self.history.aborted_writes.contains(&kv) {
+                        let violation = ConsistencyViolation::AbortedRead { tid, event: kv };
+                        report_violation!(violation);
+                        continue;
+                    }
+
+                    if let Some(&writer) = value_map.get(&kv) {
+                        if writer != tid {
+                            graph.reads[s_idx][t_idx].push((writer, kv));
                         }
+                    } else if let Some(&writer) = intermediate_writes.get(&kv) {
+                        if writer != tid {
+                            // if writer == tid, this is NotMyLastWrite
+                            let violation = ConsistencyViolation::IntermediateRead {
+                                writer_tid: writer,
+                                reader_tid: tid,
+                                read_event: kv,
+                            };
+                            report_violation!(violation);
+                            graph.reads[s_idx][t_idx].push((writer, kv));
+                        }
+                    } else {
+                        let violation = ConsistencyViolation::ThinAirRead { tid, event: kv };
+                        report_violation!(violation);
                     }
                 }
             }
@@ -326,13 +330,14 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
                 let t3_writes = &write_sets[t3_s_idx][t3_t_idx];
                 let t3_read_map = to_read_map(t3_writers);
                 for &(t1, kv) in t3_writers {
-                    if let Some(&t2) = last_writes_per_key.get(&kv.key) {
-                        if t2 == t1 || t3_read_map.contains_key(&t2) {
-                            // If we read from t2, we handle it as a read, to know if it is non-monotonic or fractured
-                            continue;
-                        }
-                        commit_order.add_edge(t1, t2, t3, kv, CoJustificationKind::FracturedSo);
+                    let Some(&t2) = last_writes_per_key.get(&kv.key) else {
+                        continue;
+                    };
+                    if t2 == t1 || t3_read_map.contains_key(&t2) {
+                        // If we read from t2, we handle it as a read, to know if it is non-monotonic or fractured
+                        continue;
                     }
+                    commit_order.add_edge(t1, t2, t3, kv, CoJustificationKind::FracturedSo);
                 }
 
                 let po_min_max_map = history.get_po_min_max_map(t3);
