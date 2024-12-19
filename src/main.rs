@@ -5,12 +5,10 @@ use std::time::Instant;
 
 use anyhow::Context;
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use consistency::checker::{ConsistencyReport, FullViolationReport, WeakestViolationReport};
 use consistency::util::{intersect_map, GetTwoMut};
 use consistency::vector_clock::VectorClock;
-use consistency::{
-    ConsistencyReport, Event, FullViolationReport, History, Key, KeyValuePair, Transaction,
-    TransactionId, Value, WeakestViolationReport,
-};
+use consistency::{Event, History, Key, KeyValuePair, Transaction, TransactionId, Value};
 use rand::prelude::*;
 use rand_distr::{Bernoulli, Pareto, Uniform};
 use rustc_hash::{FxHashMap, FxHashSet};
