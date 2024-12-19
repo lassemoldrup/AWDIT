@@ -421,6 +421,7 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
                     if t2 == t1 {
                         continue;
                     }
+
                     // TODO: break out early?
                     // else if hb[t2_s_idx][t2_t_idx][t1.0] >= t1.1 as isize {
                     // }

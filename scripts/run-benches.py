@@ -23,7 +23,8 @@ def run_benchexec(cmd):
         if key == 'cputime':
             time = val.removesuffix('s')
         if key == 'memory':
-            memory = str(int(val) // 1024 // 1024)
+            mb = int(val.removesuffix('B')) / 1024 / 1024
+            memory = f'{mb:.2f}'
         if key == 'terminationreason' and val == 'cputime':
             return 'DNF', 'DNF', None
         elif key == 'terminationreason' and val == 'memory':
@@ -266,7 +267,7 @@ if __name__ == '__main__':
     )
 
     # tools = ['ours', 'plume', 'polysi', 'dbcop', 'causalc+', 'mono']
-    tools = ['ours', 'plume']
+    tools = ['ours']
     if txn_sess_ops == 'txn':
         for isolation in ['rc', 'ra', 'cc']:
             txn_series(in_path, results_path, isolation, tools)

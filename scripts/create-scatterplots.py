@@ -14,18 +14,18 @@ if __name__ == '__main__':
 
     for isolation in ['rc', 'ra', 'cc']:
         time_headers = None
+        mem_headers = None
         res_headers = None
         headers = ['database', 'script', 'txns', 'sessions', 'events', 'keys', 'ops_per_txn']
         
         times = {}
+        mems = {}
         results = {}
         stats = {}
         for entry in os.listdir(path):
             if not entry.endswith('.csv') or (not f'-{isolation}-' in entry and not entry.endswith('-stats.csv')):
                 continue
             
-            if entry.endswith('-mem.csv'):
-                continue
             with open(os.path.join(path, entry), 'r') as csvfile:
                 reader = csv.reader(csvfile)
                 rows = list(reader)
@@ -33,6 +33,10 @@ if __name__ == '__main__':
                     if time_headers is None:
                         time_headers = rows[0][1:]
                     times[entry.removesuffix('-time.csv')] = [row[1:] for row in rows[1:]]
+                elif entry.endswith('-mem.csv'):
+                    if mem_headers is None:
+                        mem_headers = rows[0][1:]
+                    mems[entry.removesuffix('-mem.csv')] = [row[1:] for row in rows[1:]]
                 elif entry.endswith('-res.csv'):
                     if res_headers is None:
                         res_headers = rows[0][1:]
@@ -48,9 +52,10 @@ if __name__ == '__main__':
         with open(os.path.join(path, f'{date}-{name}-{isolation}.csv'), 'w', newline='') as csvfile:
             writer = csv.writer(csvfile)
 
-            writer.writerow(headers + time_headers + res_headers)
+            writer.writerow(headers + time_headers + mem_headers + res_headers)
             for k, ts in times.items():
                 res = results[k]
+                mem = mems[k]
                 sts = stats[k]
-                writer.writerows([s + t + r for s, t, r in zip(sts, ts, res)])
+                writer.writerows([s + t + m + r for s, t, m, r in zip(sts, ts, mem, res)])
 
