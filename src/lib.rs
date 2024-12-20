@@ -2,9 +2,9 @@ use std::cmp::Ordering;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt::{self, Display, Formatter, Write};
-use std::mem;
 
-use checker::{ConsistencyReport, HistoryChecker};
+use checker::{ConsistencyViolation, HistoryChecker};
+use clap::ValueEnum;
 #[cfg(feature = "dbcop")]
 use dbcop::db::history::HistParams;
 
@@ -28,10 +28,16 @@ pub struct History {
 }
 
 impl History {
-    pub fn checker<R: ConsistencyReport>(&self) -> HistoryChecker<R> {
+    pub fn checker<F: FnMut(&ConsistencyViolation)>(
+        &self,
+        report_mode: ReportMode,
+        on_violation: F,
+    ) -> HistoryChecker<F> {
         HistoryChecker {
-            report: R::default(),
             history: self,
+            on_violation,
+            report_mode,
+            any_violation: false,
         }
     }
 
@@ -271,4 +277,19 @@ impl Display for Value {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "{}", self.0)
     }
+}
+
+#[derive(Clone, ValueEnum, strum::Display, PartialEq, Eq, PartialOrd, Ord)]
+#[strum(serialize_all = "kebab-case")]
+pub enum ReportMode {
+    /// Only report the first violation found.
+    First,
+    /// Report all read consistency violations, and otherwise stop on any violation.
+    ReadConsistency,
+    /// Report all read consistency violations and causal cycles. Stop on any other violation.
+    /// Note that this incurs a slight performance penalty.
+    CausalCycles,
+    /// Report as many violations as possible. Note that this does not guarantee that the
+    /// weakest violations present are reported.
+    Full,
 }

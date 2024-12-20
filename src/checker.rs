@@ -1,21 +1,14 @@
 use super::*;
 
-pub struct HistoryChecker<'h, R> {
-    pub(super) report: R,
+pub struct HistoryChecker<'h, F> {
+    pub(super) on_violation: F,
+    pub(super) report_mode: ReportMode,
     pub(super) history: &'h History,
+    pub(super) any_violation: bool,
 }
 
-impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
-    fn check_read_consistency(&mut self) -> Result<(), ConsistencyViolation> {
-        macro_rules! report_violation {
-            ($violation:expr) => {
-                self.report.add_violation($violation.clone());
-                if !R::IS_EXHAUSTIVE {
-                    return Err($violation);
-                }
-            };
-        }
-
+impl<'h, F: FnMut(&ConsistencyViolation)> HistoryChecker<'h, F> {
+    fn check_partial_read_consistency(&mut self) -> Result<(), ConsistencyViolation> {
         for (s_idx, session) in self.history.sessions.iter().enumerate() {
             for (t_idx, transaction) in session.iter().enumerate() {
                 let tid = TransactionId(s_idx, t_idx);
@@ -50,7 +43,7 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
                                     own_write: write_kv,
                                 }
                             };
-                            report_violation!(violation);
+                            self.report_violation(violation, ReportMode::First)?;
                         }
                         &Event::Write(kv) => {
                             if inter_txn_reads.contains(&kv) {
@@ -58,7 +51,7 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
                                     tid,
                                     read_event: kv,
                                 };
-                                report_violation!(violation);
+                                self.report_violation(violation, ReportMode::First)?;
                             }
                             writes.insert(kv);
                             write_map.insert(kv.key, kv.value);
@@ -72,15 +65,6 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
     }
 
     fn infer_graph(&mut self) -> Result<WriteReadGraph, ConsistencyViolation> {
-        macro_rules! report_violation {
-            ($violation:expr) => {
-                self.report.add_violation($violation.clone());
-                if !R::IS_EXHAUSTIVE {
-                    return Err($violation);
-                }
-            };
-        }
-
         let history = self.history;
         let mut value_map = FxHashMap::default();
         let mut intermediate_writes = FxHashMap::default();
@@ -128,7 +112,7 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
                     let tid = TransactionId(s_idx, t_idx);
                     if self.history.aborted_writes.contains(&kv) {
                         let violation = ConsistencyViolation::AbortedRead { tid, event: kv };
-                        report_violation!(violation);
+                        self.report_violation(violation, ReportMode::First)?;
                         continue;
                     }
 
@@ -144,17 +128,31 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
                                 reader_tid: tid,
                                 read_event: kv,
                             };
-                            report_violation!(violation);
+                            self.report_violation(violation, ReportMode::First)?;
                             graph.reads[s_idx][t_idx].push((writer, kv));
                         }
                     } else {
                         let violation = ConsistencyViolation::ThinAirRead { tid, event: kv };
-                        report_violation!(violation);
+                        self.report_violation(violation, ReportMode::First)?;
                     }
                 }
             }
         }
         Ok(graph)
+    }
+
+    fn report_violation(
+        &mut self,
+        violation: ConsistencyViolation,
+        stop_on: ReportMode,
+    ) -> Result<(), ConsistencyViolation> {
+        (self.on_violation)(&violation);
+        self.any_violation = true;
+        if self.report_mode <= stop_on {
+            Err(violation)
+        } else {
+            Ok(())
+        }
     }
 
     fn get_repeatable_reads_graph(
@@ -185,10 +183,7 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
                                 value: r2_val,
                             },
                         };
-                        self.report.add_violation(violation.clone());
-                        if !R::IS_EXHAUSTIVE {
-                            return Err(violation);
-                        }
+                        self.report_violation(violation, ReportMode::CausalCycles)?;
                     }
                     writers.push((writer_tid, kv.value));
                 }
@@ -198,13 +193,17 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
         Ok(read_map)
     }
 
-    pub fn check_causal(&mut self) -> R {
-        if self.check_read_consistency().is_err() {
-            return mem::take(&mut self.report);
+    pub fn check_causal(&mut self) -> bool {
+        self.any_violation = false;
+        if self.check_partial_read_consistency().is_err() {
+            return false;
         }
         let Ok(graph) = self.infer_graph() else {
-            return mem::take(&mut self.report);
+            return false;
         };
+        if self.report_mode <= ReportMode::ReadConsistency && self.any_violation {
+            return false;
+        }
 
         let history = self.history;
 
@@ -296,26 +295,39 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
             hb.insert(t3, t3_vc);
         });
         if let Err(cycle) = dfs_res {
-            self.report
-                .add_violation(ConsistencyViolation::Cycle(cycle));
-            return mem::take(&mut self.report);
+            if let Err(_) =
+                self.report_violation(ConsistencyViolation::Cycle(cycle), ReportMode::CausalCycles)
+            {
+                return false;
+            }
         }
 
         // Check for cycles in the reverse commit order
-        commit_order.find_cycles(&graph, &mut self.report);
-        mem::take(&mut self.report)
+        commit_order.find_cycles(&graph, &mut self.on_violation) && !self.any_violation
     }
 
-    pub fn check_read_atomic(&mut self) -> R {
-        if self.check_read_consistency().is_err() {
-            return mem::take(&mut self.report);
+    pub fn check_read_atomic(&mut self) -> bool {
+        self.any_violation = false;
+        if self.check_partial_read_consistency().is_err() {
+            return false;
         }
         let Ok(graph) = self.infer_graph() else {
-            return mem::take(&mut self.report);
+            return false;
         };
+        if self.report_mode <= ReportMode::ReadConsistency && self.any_violation {
+            return false;
+        }
+
+        if self.report_mode == ReportMode::CausalCycles {
+            if let Err(cycle) = graph.dfs(|_| {}) {
+                let _ = self
+                    .report_violation(ConsistencyViolation::Cycle(cycle), ReportMode::CausalCycles);
+                return false;
+            }
+        }
 
         let Ok(repeatable_reads_graph) = self.get_repeatable_reads_graph(&graph) else {
-            return mem::take(&mut self.report);
+            return false;
         };
 
         let history = self.history;
@@ -368,17 +380,28 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
         }
 
         // Check for cycles in the reverse commit order
-        commit_order.find_cycles(&graph, &mut self.report);
-        mem::take(&mut self.report)
+        commit_order.find_cycles(&graph, &mut self.on_violation) && !self.any_violation
     }
 
-    pub fn check_read_committed(&mut self) -> R {
-        if self.check_read_consistency().is_err() {
-            return mem::take(&mut self.report);
+    pub fn check_read_committed(&mut self) -> bool {
+        self.any_violation = false;
+        if self.check_partial_read_consistency().is_err() {
+            return false;
         }
         let Ok(graph) = self.infer_graph() else {
-            return mem::take(&mut self.report);
+            return false;
         };
+        if self.report_mode <= ReportMode::ReadConsistency && self.any_violation {
+            return false;
+        }
+
+        if self.report_mode == ReportMode::CausalCycles {
+            if let Err(cycle) = graph.dfs(|_| {}) {
+                let _ = self
+                    .report_violation(ConsistencyViolation::Cycle(cycle), ReportMode::CausalCycles);
+                return false;
+            }
+        }
 
         let history = self.history;
         let write_sets = history.get_write_sets();
@@ -427,8 +450,7 @@ impl<'h, R: ConsistencyReport> HistoryChecker<'h, R> {
         }
 
         // Check for cycles in the reverse commit order
-        commit_order.find_cycles(&graph, &mut self.report);
-        mem::take(&mut self.report)
+        commit_order.find_cycles(&graph, &mut self.on_violation) && !self.any_violation
     }
 }
 
@@ -487,7 +509,12 @@ impl PartialCommitOrder {
         self.rev_order[t1.0][t1.1].push((t2, CoJustification { t3, kv: x, kind }));
     }
 
-    fn find_cycles<R: ConsistencyReport>(&self, graph: &WriteReadGraph, report: &mut R) {
+    fn find_cycles(
+        &self,
+        graph: &WriteReadGraph,
+        on_violation: &mut impl FnMut(&ConsistencyViolation),
+    ) -> bool {
+        let mut success = true;
         let mut state: Vec<_> = graph
             .reads
             .iter()
@@ -500,26 +527,28 @@ impl PartialCommitOrder {
             if state[s_idx][t_idx].index != usize::MAX {
                 continue;
             }
-            self.tarjan_visit(
+            success = self.tarjan_visit(
                 TransactionId(s_idx, t_idx),
                 graph,
                 &mut state,
                 &mut next_index,
                 &mut stack,
-                report,
-            );
+                on_violation,
+            ) && success;
         }
+        success
     }
 
-    fn tarjan_visit<R: ConsistencyReport>(
+    fn tarjan_visit(
         &self,
         tid: TransactionId,
         graph: &WriteReadGraph,
         state: &mut Vec<Vec<TarjanState>>,
         next_index: &mut usize,
         stack: &mut Vec<TransactionId>,
-        report: &mut R,
-    ) {
+        on_violation: &mut impl FnMut(&ConsistencyViolation),
+    ) -> bool {
+        let mut success = true;
         let node_state = &mut state[tid.0][tid.1];
         node_state.index = *next_index;
         node_state.low_link = *next_index;
@@ -533,7 +562,8 @@ impl PartialCommitOrder {
         for (tid2, _) in self.rev_neighbours(tid, graph) {
             let tid2_node_state = state[tid2.0][tid2.1];
             if tid2_node_state.index == usize::MAX {
-                self.tarjan_visit(tid2, graph, state, next_index, stack, report);
+                success = self.tarjan_visit(tid2, graph, state, next_index, stack, on_violation)
+                    && success;
                 low_link = low_link.min(state[tid2.0][tid2.1].low_link);
             } else if tid2_node_state.on_stack {
                 low_link = low_link.min(tid2_node_state.low_link);
@@ -551,15 +581,17 @@ impl PartialCommitOrder {
                 // Singleton SCC
                 stack.pop();
                 state[tid.0][tid.1].on_stack = false;
-                return;
+                return success;
             }
             let scc_start = stack.len() - rev_idx - 1;
-            self.report_scc(&stack[scc_start..], graph, report);
+            self.report_scc(&stack[scc_start..], graph, on_violation);
             for &tid2 in &stack[scc_start..] {
                 state[tid2.0][tid2.1].on_stack = false;
             }
             stack.truncate(scc_start);
+            success = false;
         }
+        success
     }
 
     fn rev_neighbours<'g>(
@@ -575,11 +607,11 @@ impl PartialCommitOrder {
         )
     }
 
-    fn report_scc<R: ConsistencyReport>(
+    fn report_scc(
         &self,
         scc: &[TransactionId],
         graph: &WriteReadGraph,
-        report: &mut R,
+        on_violation: &mut impl FnMut(&ConsistencyViolation),
     ) {
         let root = scc[0];
         let scc_set: FxHashSet<_> = scc.iter().copied().collect();
@@ -600,7 +632,7 @@ impl PartialCommitOrder {
         }
 
         let cycle = graph.build_cycle(root, |tid| parent[&tid]);
-        report.add_violation(ConsistencyViolation::Cycle(cycle));
+        on_violation(&ConsistencyViolation::Cycle(cycle));
     }
 }
 
@@ -835,74 +867,6 @@ impl WriteReadGraph {
     }
 }
 
-pub trait ConsistencyReport: Default + Display {
-    const IS_EXHAUSTIVE: bool;
-
-    fn add_violation(&mut self, violation: ConsistencyViolation);
-    fn is_success(&self) -> bool;
-}
-
-pub struct WeakestViolationReport(Result<(), ConsistencyViolation>);
-
-impl Default for WeakestViolationReport {
-    fn default() -> Self {
-        Self(Ok(()))
-    }
-}
-
-impl Display for WeakestViolationReport {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        match &self.0 {
-            Ok(_) => writeln!(f, "Consistent."),
-            Err(violation) => {
-                writeln!(f, "Inconsistent:")?;
-                writeln!(f, "{violation}")
-            }
-        }
-    }
-}
-
-impl ConsistencyReport for WeakestViolationReport {
-    const IS_EXHAUSTIVE: bool = false;
-
-    fn add_violation(&mut self, violation: ConsistencyViolation) {
-        self.0 = Err(violation);
-    }
-
-    fn is_success(&self) -> bool {
-        self.0.is_ok()
-    }
-}
-
-#[derive(Default)]
-pub struct FullViolationReport(Vec<ConsistencyViolation>);
-
-impl Display for FullViolationReport {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        if self.is_success() {
-            writeln!(f, "Consistent.")?
-        } else {
-            writeln!(f, "Inconsistent:")?;
-            for violation in &self.0 {
-                writeln!(f, "{violation}")?;
-            }
-        }
-        Ok(())
-    }
-}
-
-impl ConsistencyReport for FullViolationReport {
-    const IS_EXHAUSTIVE: bool = true;
-
-    fn add_violation(&mut self, violation: ConsistencyViolation) {
-        self.0.push(violation);
-    }
-
-    fn is_success(&self) -> bool {
-        self.0.is_empty()
-    }
-}
-
 #[derive(thiserror::Error, Debug, Clone)]
 pub enum ConsistencyViolation {
     #[error("Transaction {tid} reads {event} out of thin air")]
@@ -1032,41 +996,43 @@ impl Display for ViolatingCycle {
 mod tests {
     use test_generator::test_resources;
 
-    use super::{ConsistencyReport, History, WeakestViolationReport};
+    use crate::ReportMode;
+
+    use super::History;
 
     #[test_resources("res/tests/causal/**/*.txt")]
     fn test_causal(file: &str) {
         let history = History::parse_test_history(file).unwrap();
-        let mut checker = history.checker::<WeakestViolationReport>();
-        assert!(checker.check_causal().is_success());
-        assert!(checker.check_read_atomic().is_success());
-        assert!(checker.check_read_committed().is_success());
+        let mut checker = history.checker(ReportMode::First, |_| {});
+        assert!(checker.check_causal());
+        assert!(checker.check_read_atomic());
+        assert!(checker.check_read_committed());
     }
 
     #[test_resources("res/tests/read-atomic/**/*.txt")]
     fn test_read_atomic(file: &str) {
         let history = History::parse_test_history(file).unwrap();
-        let mut checker = history.checker::<WeakestViolationReport>();
-        assert!(!checker.check_causal().is_success());
-        assert!(checker.check_read_atomic().is_success());
-        assert!(checker.check_read_committed().is_success());
+        let mut checker = history.checker(ReportMode::First, |_| {});
+        assert!(!checker.check_causal());
+        assert!(checker.check_read_atomic());
+        assert!(checker.check_read_committed());
     }
 
     #[test_resources("res/tests/read-committed/**/*.txt")]
     fn test_read_committed(file: &str) {
         let history = History::parse_test_history(file).unwrap();
-        let mut checker = history.checker::<WeakestViolationReport>();
-        assert!(!checker.check_causal().is_success());
-        assert!(!checker.check_read_atomic().is_success());
-        assert!(checker.check_read_committed().is_success());
+        let mut checker = history.checker(ReportMode::First, |violation| println!("{violation}"));
+        assert!(!checker.check_causal());
+        assert!(!checker.check_read_atomic());
+        assert!(checker.check_read_committed());
     }
 
     #[test_resources("res/tests/none/**/*.txt")]
     fn test_inconsistent(file: &str) {
         let history = History::parse_test_history(file).unwrap();
-        let mut checker = history.checker::<WeakestViolationReport>();
-        assert!(!checker.check_causal().is_success());
-        assert!(!checker.check_read_atomic().is_success());
-        assert!(!checker.check_read_committed().is_success());
+        let mut checker = history.checker(ReportMode::First, |_| {});
+        assert!(!checker.check_causal());
+        assert!(!checker.check_read_atomic());
+        assert!(!checker.check_read_committed());
     }
 }

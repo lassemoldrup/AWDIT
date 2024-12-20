@@ -19,7 +19,7 @@ TODO: explain how to check consistency.
 To generate a random history, run
 
 ```bash
-$ target/release/consistency generate output/path
+$ target/release/awdit generate output/path
 ```
 
 By default, this will generate a history of 20 events in the `plume` format (see the [formats](#formats) section for more information).
@@ -27,13 +27,13 @@ By default, this will generate a history of 20 events in the `plume` format (see
 To convert from one format to another, run
 
 ```bash
-$ target/release/consistency convert -f <FROM_FORMAT> -t <TO_FORMAT> from/path to/path
+$ target/release/awdit convert -f <FROM_FORMAT> -t <TO_FORMAT> from/path to/path
 ```
 
 To get statistics about a history, run
 
 ```bash
-$ target/release/consistency stats path/to/history
+$ target/release/awdit stats path/to/history
 ```
 
 By default, the history is expected to be in the `plume` format, but the `--format` flag can be supplied to use a different format.

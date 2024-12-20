@@ -11,7 +11,7 @@ date = datetime.now().strftime('%Y-%m-%d')
 def get_stats(in_path, entry):
     in_path = os.path.join(in_path, entry, 'plume')
     result = subprocess.run(
-        ['target/release/consistency', 'stats', '--json', in_path],
+        ['target/release/awdit', 'stats', '--json', in_path],
         check=True,
         stdout=subprocess.PIPE,
         text=True

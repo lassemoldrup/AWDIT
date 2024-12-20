@@ -4,10 +4,9 @@ use std::thread;
 use std::time::Instant;
 
 use anyhow::Context;
-use awdit::checker::{ConsistencyReport, FullViolationReport, WeakestViolationReport};
 use awdit::util::{intersect_map, GetTwoMut};
 use awdit::vector_clock::VectorClock;
-use awdit::{Event, History, Key, KeyValuePair, Transaction, TransactionId, Value};
+use awdit::{Event, History, Key, KeyValuePair, ReportMode, Transaction, TransactionId, Value};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use rand::prelude::*;
 use rand_distr::{Bernoulli, Pareto, Uniform};
@@ -91,8 +90,8 @@ impl GenerateArgs {
     fn _find_inconsistent(&self) {
         for _ in 0..100000 {
             let history = PartialHistory::generate(self).into_read_committed_history();
-            let mut checker = history.checker::<WeakestViolationReport>();
-            if !checker.check_read_atomic().is_success() {
+            let mut checker = history.checker(ReportMode::First, |_| {});
+            if !checker.check_read_atomic() {
                 println!("{history}");
                 return;
             }
@@ -118,20 +117,6 @@ enum HistoryFormat {
     #[strum(serialize = "dbcop")]
     DbCop,
     Test,
-}
-
-#[derive(Clone, ValueEnum, strum::Display)]
-#[strum(serialize_all = "kebab-case")]
-enum ReportMode {
-    /// Only report the first violation found.
-    First,
-    /// Stop after reporting all read consistency violations (continues if none are found).
-    ReadConsistency,
-    /// Stop on causal cycles (continues if none are found).
-    CausalCycles,
-    /// Report as many violations as possible. Note that this does not guarantee that the
-    /// weakest violations present are reported.
-    Full,
 }
 
 struct PartialHistory {
@@ -611,25 +596,32 @@ fn main() -> anyhow::Result<()> {
             let parsing_elapsed = parsing_start.elapsed();
             println!("Done parsing: {}ms", parsing_elapsed.as_millis());
 
-            macro_rules! check_history {
-                ($report:ty) => {{
-                    let mut checker = history.checker::<$report>();
-                    match isolation {
+            let checking_start = Instant::now();
+
+            let mut checker = history.checker(report_mode, |violation| {
+                println!("{}", violation);
+            });
+
+            // Spawn a new thread to avoid stack overflow for big histories
+            let result = thread::scope(|scope| {
+                thread::Builder::new()
+                    .stack_size(stack_size * 1024 * 1024)
+                    .spawn_scoped(scope, || match isolation {
                         IsolationLevel::ReadCommitted => checker.check_read_committed(),
                         IsolationLevel::ReadAtomic => checker.check_read_atomic(),
                         IsolationLevel::Causal => checker.check_causal(),
-                    }
-                }};
+                    })
+                    .unwrap()
+                    .join()
+                    .unwrap()
+            });
+
+            if result {
+                println!("Consistent.");
+            } else {
+                println!("Inconsistent.");
             }
 
-            let checking_start = Instant::now();
-            // Spawn a new thread to avoid stack overflow for big histories
-            thread::scope(|scope| {
-                thread::Builder::new()
-                    .stack_size(stack_size * 1024 * 1024)
-                    .spawn_scoped(scope, || todo!())
-                    .unwrap();
-            });
             let checking_elapsed = checking_start.elapsed();
             println!("Done checking: {}ms", checking_elapsed.as_millis());
         }

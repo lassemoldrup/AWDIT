@@ -38,7 +38,7 @@ def run_benchexec(cmd):
     
 # Run with read-committed, read-atomic, or causal
 def run_ours(history, isolation):
-    time, memory, _ = run_benchexec(['target/release/consistency', 'check', '--isolation', isolation, os.path.join(history, 'plume')])
+    time, memory, _ = run_benchexec(['target/release/awdit', 'check', '--isolation', isolation, os.path.join(history, 'plume')])
     result = 'N/A'
     with open('output.log', 'r') as output:
         for line in output:
