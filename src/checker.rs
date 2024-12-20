@@ -234,7 +234,7 @@ impl<'h, F: FnMut(&ConsistencyViolation)> HistoryChecker<'h, F> {
                     continue;
                 };
                 t3_vc.join(pred_vc);
-                t3_vc.join1(pred.0, pred.1 as isize);
+                t3_vc.join1(pred.0, pred.1 as i32);
                 let pred_succ_sessions = succ_sessions.get_mut(&pred).expect("pred is in hb");
                 pred_succ_sessions.remove(&t3.0);
                 if pred_succ_sessions.is_empty() {

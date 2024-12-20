@@ -254,7 +254,7 @@ impl PartialHistory {
             if t_idx > 0 {
                 let (pred, succ) = hb[s_idx].get_two_mut(t_idx - 1, t_idx);
                 succ.join(pred);
-                succ.join1(s_idx, t_idx as isize - 1);
+                succ.join1(s_idx, t_idx as i32);
             }
             let mut read_map = FxHashMap::default();
             let mut writers: BTreeMap<usize, Vec<Key>> = BTreeMap::new();
@@ -353,7 +353,7 @@ impl PartialHistory {
                             .or_default()
                             .push(kv.key);
                         read_map.insert(kv.key, (write_tid, write_value));
-                        hb[s_idx][t_idx].join1(write_tid.0, write_tid.1 as isize);
+                        hb[s_idx][t_idx].join1(write_tid.0, write_tid.1 as i32);
                         if write_tid.0 != s_idx {
                             let (pred_sess, succ_sess) = hb.get_two_mut(write_tid.0, s_idx);
                             succ_sess[t_idx].join(&pred_sess[write_tid.1]);
@@ -697,7 +697,7 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn pair_to_tid(pair: (usize, isize)) -> Option<TransactionId> {
+fn pair_to_tid(pair: (usize, i32)) -> Option<TransactionId> {
     if pair.1 < 0 {
         None
     } else {
