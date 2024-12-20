@@ -594,7 +594,7 @@ fn main() -> anyhow::Result<()> {
             };
 
             let parsing_elapsed = parsing_start.elapsed();
-            println!("Done parsing: {}ms", parsing_elapsed.as_millis());
+            println!("Done parsing: {}ms\n", parsing_elapsed.as_millis());
 
             let checking_start = Instant::now();
 
