@@ -252,7 +252,8 @@ impl<'h, F: FnMut(&ConsistencyViolation)> HistoryChecker<'h, F> {
                         // If -1, no predecessors in t2's session
                         continue;
                     };
-                    // Find the last write to x in t2's session that is less than or equal to last_pred
+                    // Find the last write to x in t2's session that is less than or equal to
+                    // last_pred
                     let Some(last_write) =
                         writes.partition_point(|&i| i <= last_pred).checked_sub(1)
                     else {
@@ -345,7 +346,8 @@ impl<'h, F: FnMut(&ConsistencyViolation)> HistoryChecker<'h, F> {
                         continue;
                     };
                     if t2 == t1 || t3_read_map.contains_key(&t2) {
-                        // If we read from t2, we handle it as a read, to know if it is non-monotonic or fractured
+                        // If we read from t2, we handle it as a read, to know if it is
+                        // non-monotonic or fractured
                         continue;
                     }
                     commit_order.add_edge(t1, t2, t3, kv, CoJustificationKind::FracturedSo);
@@ -416,7 +418,8 @@ impl<'h, F: FnMut(&ConsistencyViolation)> HistoryChecker<'h, F> {
                         first_txn_reads.insert(kv);
                     }
                 }
-                // Stores per key the earliest (last seen) two writers and the values read from them
+                // Stores per key the earliest (last seen) two writers and the values read from
+                // them
                 let mut earliest_writer_per_loc: FxHashMap<
                     Key,
                     (Option<(TransactionId, Value)>, (TransactionId, Value)),
@@ -896,7 +899,9 @@ pub enum ConsistencyViolation {
         read_event: KeyValuePair,
         last_write: KeyValuePair,
     },
-    #[error("Transaction {reader_tid} reads intermediate {read_event} from {writer_tid} instead of last write")]
+    #[error(
+        "Transaction {reader_tid} reads intermediate {read_event} from {writer_tid} instead of last write"
+    )]
     IntermediateRead {
         writer_tid: TransactionId,
         reader_tid: TransactionId,

@@ -1,11 +1,12 @@
 use std::iter;
 
+use crate::TransactionId;
 use crate::fenwick::MinFenwickTree;
 use crate::util::Captures;
-use crate::TransactionId;
 
-/// A data structure for storing partial orders over transactions in `k` sessions.
-/// Supports `O(k^2 log n)` edge insertion and `O(k^2 log n)` reachability queries.
+/// A data structure for storing partial orders over transactions in `k`
+/// sessions. Supports `O(k^2 log n)` edge insertion and `O(k^2 log n)`
+/// reachability queries.
 #[derive(Debug)]
 pub struct PartialOrder {
     /// `edges[i][j]` holds all edges from session `i` to session `j`.

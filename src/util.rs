@@ -14,7 +14,10 @@ impl<T> GetTwoMut<T> for [T] {
         }
 
         if i >= self.len() || j >= self.len() {
-            panic!("Attempted to get two mutable references to element(s) outside the slice. indices: ({i}, {j}), len: {}", self.len());
+            panic!(
+                "Attempted to get two mutable references to element(s) outside the slice. indices: ({i}, {j}), len: {}",
+                self.len()
+            );
         }
 
         let ptr = self.as_mut_ptr();

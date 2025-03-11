@@ -4,7 +4,7 @@ use std::thread;
 use std::time::Instant;
 
 use anyhow::Context;
-use awdit::util::{intersect_map, GetTwoMut};
+use awdit::util::{GetTwoMut, intersect_map};
 use awdit::vector_clock::VectorClock;
 use awdit::{Event, History, Key, KeyValuePair, ReportMode, Transaction, TransactionId, Value};
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -32,7 +32,8 @@ enum Command {
         format: HistoryFormat,
         #[clap(short, long, default_value_t = ReportMode::Full)]
         report_mode: ReportMode,
-        /// The size of the stack in MiB, can be increased if stack overflows occur.
+        /// The size of the stack in MiB, can be increased if stack overflows
+        /// occur.
         #[clap(short, long, default_value_t = 32)]
         stack_size: usize,
     },
@@ -286,7 +287,8 @@ impl PartialHistory {
                         let earliest_legal_idx =
                             idx_in_writes_per_loc[kv.key.0][&earliest_legal_write];
 
-                        // Use rejection sampling to determine a choice out of the remaining possibilities
+                        // Use rejection sampling to determine a choice out of the remaining
+                        // possibilities
                         let num_choices = writes_per_loc[kv.key.0].len() - earliest_legal_idx;
                         let mut choices = (0..num_choices).collect::<Vec<_>>();
                         choices.shuffle(&mut rng);
@@ -296,8 +298,9 @@ impl PartialHistory {
                                 writes_per_loc[kv.key.0][earliest_legal_idx + choice];
                             let write_co_idx = self.rev_commit_order[&write_tid];
 
-                            // Optimization: we know it's safe to read from writes co-before any of our other writers
-                            // Optimization: if we are already reading from a transaction, we can do so again
+                            // Optimization: we know it's safe to read from writes co-before any of
+                            // our other writers Optimization: if we are already reading from a
+                            // transaction, we can do so again
                             let min_writer_co_idx = writers
                                 .first_key_value()
                                 .map(|(i, _)| *i)
@@ -311,15 +314,16 @@ impl PartialHistory {
 
                             // Other writers before the considered write could cause problems
                             for (&other_write_co_idx, keys) in writers.range(..write_co_idx) {
-                                // If the considered write writes to any key of the same keys, there is a conflict
+                                // If the considered write writes to any key of the same keys, there
+                                // is a conflict
                                 if keys
                                     .iter()
                                     .any(|k2| idx_in_writes_per_loc[k2.0].contains_key(&write_tid))
                                 {
                                     continue 'choice_loop;
                                 }
-                                // Find the last write to k2 in each session before the considered write
-                                // and check if it is after the other write
+                                // Find the last write to k2 in each session before the considered
+                                // write and check if it is after the other write
                                 let inconsistent = hb[write_tid.0][write_tid.1]
                                     .iter()
                                     .enumerate()
@@ -423,7 +427,8 @@ impl PartialHistory {
                         let earliest_legal_idx =
                             idx_in_writes_per_loc[kv.key.0][&earliest_legal_write];
 
-                        // Use rejection sampling to determine a choice out of the remaining possibilities
+                        // Use rejection sampling to determine a choice out of the remaining
+                        // possibilities
                         let num_choices = writes_per_loc[kv.key.0].len() - earliest_legal_idx;
                         let mut choices = (0..num_choices).collect::<Vec<_>>();
                         choices.shuffle(&mut rng);
@@ -433,8 +438,9 @@ impl PartialHistory {
                                 writes_per_loc[kv.key.0][earliest_legal_idx + choice];
                             let write_co_idx = self.rev_commit_order[&write_tid];
 
-                            // Optimization: we know it's safe to read from writes co-before any of our other writers
-                            // Optimization: if we are already reading from a transaction, we can do so again
+                            // Optimization: we know it's safe to read from writes co-before any of
+                            // our other writers Optimization: if we are already reading from a
+                            // transaction, we can do so again
                             let min_writer_co_idx = *writers.first().unwrap_or(&usize::MAX);
                             if write_co_idx <= min_writer_co_idx || writers.contains(&write_co_idx)
                             {

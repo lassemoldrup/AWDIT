@@ -12,7 +12,7 @@ use itertools::Itertools;
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde::Serialize;
 use smallvec::SmallVec;
-use util::{intersect_map, Captures};
+use util::{Captures, intersect_map};
 use vector_clock::VectorClock;
 
 pub mod checker;
@@ -22,6 +22,8 @@ pub mod partial_order;
 pub mod util;
 pub mod vector_clock;
 
+/// Represents a database history. Initial reads are handled explicitly, meaning
+/// there should be a transaction writing 0 to all keys, if so desired.
 pub struct History {
     pub sessions: Vec<Vec<Transaction>>,
     pub aborted_writes: FxHashSet<KeyValuePair>,
@@ -168,6 +170,7 @@ impl Display for HistoryStats {
     }
 }
 
+/// A transaction of a database history.
 #[derive(Clone, Debug)]
 pub struct Transaction {
     pub events: Vec<Event>,
@@ -187,6 +190,8 @@ impl Transaction {
     }
 }
 
+/// An identifier for a transaction. Consists of the index of a session and the
+/// index of the transaction inside that session.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TransactionId(pub usize, pub usize);
 
@@ -206,6 +211,7 @@ impl Display for TransactionId {
     }
 }
 
+/// An event (aka an operation) of a database history.
 #[derive(Clone, Copy, Debug)]
 pub enum Event {
     Read(KeyValuePair),
@@ -284,12 +290,13 @@ impl Display for Value {
 pub enum ReportMode {
     /// Only report the first violation found.
     First,
-    /// Report all read consistency violations, and otherwise stop on any violation.
+    /// Report all read consistency violations, and otherwise stop on any
+    /// violation.
     ReadConsistency,
-    /// Report all read consistency violations and causal cycles. Stop on any other violation.
-    /// Note that this incurs a slight performance penalty.
+    /// Report all read consistency violations and causal cycles. Stop on any
+    /// other violation. Note that this incurs a slight performance penalty.
     CausalCycles,
-    /// Report as many violations as possible. Note that this does not guarantee that the
-    /// weakest violations present are reported.
+    /// Report as many violations as possible. Note that this does not guarantee
+    /// that the weakest violations present are reported.
     Full,
 }
