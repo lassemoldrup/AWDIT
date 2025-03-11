@@ -42,7 +42,7 @@ By default, the history is expected to be in the `plume` format, but the `--form
 
 The tool supports four history formats:
 
-- `plume`: a text-based format used by Plume and PolySI. Histories in this format should be directories with a single file called `history.txt`.
+- `plume`: a text-based format used by Plume and PolySI. Histories in this format is a single `.txt` file.
 - `dbcop`: a binary format used by DBCop. Histories in this format should be directories with a single file called `history.bincode`.
 - `cobra`: a binary format used by DBCobra. Histories in this format are directories with `.log` files (one for each session).
 - `test`: a human-friendly text-based format useful for writing tests. A history in this format is a single `.txt` file.

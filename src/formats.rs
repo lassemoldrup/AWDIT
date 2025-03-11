@@ -19,21 +19,10 @@ use super::History;
 
 impl History {
     pub fn parse_plume_history(path: impl AsRef<Path>) -> Result<Self, ParseHistoryError> {
-        if !path.as_ref().metadata()?.is_dir() {
-            return Err(ParseHistoryError::NotADirectory(
-                path.as_ref().to_path_buf(),
-            ));
+        if !path.as_ref().metadata()?.is_file() {
+            return Err(ParseHistoryError::NotAFile(path.as_ref().to_path_buf()));
         }
-
-        let files: Result<Vec<_>, _> = path.as_ref().read_dir()?.collect();
-        let files = files?;
-        if files.len() != 1 {
-            return Err(ParseHistoryError::NotAPlumeDirectory(
-                path.as_ref().to_path_buf(),
-            ));
-        }
-
-        let contents = fs::read_to_string(files[0].path())?;
+        let contents = fs::read_to_string(path)?;
         let mut history = History {
             sessions: vec![],
             aborted_writes: FxHashSet::default(),
@@ -111,11 +100,13 @@ impl History {
         Ok(history)
     }
 
-    pub fn serialize_plume_history(&self, path: impl AsRef<Path>) -> Result<(), io::Error> {
-        let file_path = path.as_ref().join("history.txt");
-        fs::create_dir_all(path)?;
-        let mut writer = File::create(file_path)?;
-        write!(&mut writer, "{}", PlumeHistoryDisplay { history: self })
+    pub fn serialize_plume_history(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> Result<(), SerializeFileHistoryError> {
+        let mut writer = File::create(path)?;
+        write!(&mut writer, "{}", PlumeHistoryDisplay { history: self })?;
+        Ok(())
     }
 
     pub fn parse_cobra_history(path: impl AsRef<Path>) -> Result<Self, ParseHistoryError> {
@@ -385,7 +376,7 @@ impl History {
     pub fn serialize_test_history(
         &self,
         path: impl AsRef<Path>,
-    ) -> Result<(), SerializeTestHistoryError> {
+    ) -> Result<(), SerializeFileHistoryError> {
         let mut writer = File::create(path)?;
         write!(&mut writer, "{}", self)?;
         Ok(())
@@ -472,8 +463,8 @@ pub enum ParseHistoryError {
     Io(#[from] io::Error),
     #[error("{0} is not a directory")]
     NotADirectory(PathBuf),
-    #[error("{0} is not a single-file directory with a .txt file")]
-    NotAPlumeDirectory(PathBuf),
+    #[error("{0} is not a .txt file")]
+    NotAFile(PathBuf),
     #[error("File did not match Plume format")]
     InvalidPlumeFormat,
     #[error("File did not match Cobra format")]
@@ -484,7 +475,7 @@ pub enum ParseHistoryError {
 }
 
 #[derive(thiserror::Error, Debug)]
-pub enum SerializeTestHistoryError {
+pub enum SerializeFileHistoryError {
     #[error("{0}")]
     Io(#[from] io::Error),
     #[error("Path is not a file")]

@@ -9,7 +9,7 @@ from datetime import datetime
 date = datetime.now().strftime('%Y-%m-%d')
 
 def get_stats(in_path, entry):
-    in_path = os.path.join(in_path, entry, 'plume')
+    in_path = os.path.join(in_path, entry, 'plume/history.txt')
     result = subprocess.run(
         ['target/release/awdit', 'stats', '--json', in_path],
         check=True,

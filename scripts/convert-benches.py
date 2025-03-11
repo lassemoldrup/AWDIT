@@ -5,7 +5,7 @@ import os
 
 def convert_entry(in_path, out_path, entry):
     full_path = os.path.join(in_path, entry, 'cobra/log')
-    plume_path = os.path.join(out_path, entry, 'plume')
+    plume_path = os.path.join(out_path, entry, 'plume/history.txt')
     dbcop_path = os.path.join(out_path, entry, 'dbcop')
 
     # With TPC-C using Postgres and CockroachDB, the DB is loaded from an inital state,
