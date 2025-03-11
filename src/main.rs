@@ -149,11 +149,11 @@ impl PartialHistory {
                 })
             }));
 
-        let session_dist = Uniform::new(0, num_sessions);
+        let session_dist = Uniform::new(0, num_sessions).unwrap();
         let event_dist = Bernoulli::new(app.read_ratio).unwrap();
         let commit_dist = Bernoulli::new(1. / app.mean_transaction_size).unwrap();
 
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut key_shuffle = (0..app.locations).collect::<Vec<_>>();
         key_shuffle.shuffle(&mut rng);
         // let alpha = 0.2f64.log2() / (5f64.log2() - (app.locations as f64).log2());
@@ -165,7 +165,7 @@ impl PartialHistory {
             let key = if k < app.locations {
                 key_shuffle[k]
             } else {
-                rand::thread_rng().gen_range(0..app.locations)
+                rand::rng().random_range(0..app.locations)
             };
             Key(key)
         });
@@ -208,7 +208,7 @@ impl PartialHistory {
             };
             sessions[session].last_mut().unwrap().push(event);
 
-            let should_commit = commit_dist.sample(&mut rand::thread_rng());
+            let should_commit = commit_dist.sample(&mut rand::rng());
             if should_commit {
                 commit_order.push(tid);
                 rev_commit_order.insert(tid, commit_order.len() - 1);
@@ -236,7 +236,7 @@ impl PartialHistory {
     }
 
     fn into_causal_history(mut self) -> History {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let non_init_sessions = self.sessions.len() - 1;
 
         // Update read events
@@ -381,7 +381,7 @@ impl PartialHistory {
     }
 
     fn into_read_atomic_history(mut self) -> History {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let non_init_sessions = self.sessions.len() - 1;
 
         let mut writes_per_loc_per_session: Vec<FxHashMap<Key, Vec<usize>>> =
@@ -486,7 +486,7 @@ impl PartialHistory {
     }
 
     fn into_read_committed_history(mut self) -> History {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let non_init_sessions = self.sessions.len() - 1;
 
         // Values written by transactions in commit order
