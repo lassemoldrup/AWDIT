@@ -63,10 +63,4 @@ if __name__ == '__main__':
     in_path = sys.argv[1]
     out_path = sys.argv[2]
 
-    print('Building our tool..')
-    subprocess.run(
-        ['cargo', 'build', '--release'],
-        check=True
-    )
-
     convert_all(in_path, out_path)

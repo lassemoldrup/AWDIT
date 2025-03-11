@@ -93,13 +93,7 @@ if __name__ == '__main__':
     txn_sess_ops = sys.argv[1]
     in_path = sys.argv[2]
     out_path = sys.argv[3]
-
-    print('Building our tool..')
-    subprocess.run(
-        ['cargo', 'build', '--release'],
-        check=True
-    )
-
+    
     if txn_sess_ops == 'txn':
         convert_txn_series(in_path, out_path)
     elif txn_sess_ops == 'sess':

@@ -255,19 +255,7 @@ if __name__ == '__main__':
     in_path = sys.argv[2]
     results_path = sys.argv[3]
 
-    print('Building our tool..')
-    subprocess.run(
-        ['cargo', 'build', '--release'],
-        check=True
-    )
-    print('Building DBCop..')
-    subprocess.run(
-        ['cargo', 'build', '--release', '--manifest-path', 'tools/dbcop/Cargo.toml'],
-        check=True
-    )
-
-    # tools = ['ours', 'plume', 'polysi', 'dbcop', 'causalc+', 'mono']
-    tools = ['ours']
+    tools = ['ours', 'plume', 'polysi', 'dbcop', 'causalc+', 'mono']
     if txn_sess_ops == 'txn':
         for isolation in ['rc', 'ra', 'cc']:
             txn_series(in_path, results_path, isolation, tools)
