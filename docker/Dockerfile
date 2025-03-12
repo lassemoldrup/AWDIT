@@ -1,6 +1,9 @@
-FROM rust:1.85 as build
+FROM rust:1.85 AS build
 
-RUN apt-get update && apt-get install -y clang
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+    libclang-dev llvm
 
 WORKDIR /awdit
 COPY Cargo.toml Cargo.lock build.rs ./
@@ -16,7 +19,7 @@ RUN cargo build --release --manifest-path tools/dbcop/Cargo.toml
 
 FROM ubuntu:24.04
 
-RUN apt-get update && apt-get install -y python3 python3-pip python-is-python3
+RUN apt-get update && apt-get install -y python3 python3-pip python-is-python3 openjdk-21-jre
 
 WORKDIR /awdit
 RUN mkdir -p target/release

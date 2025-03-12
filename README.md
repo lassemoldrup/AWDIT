@@ -1,3 +1,36 @@
+# AWDIT Artifact
+
+This README contains instructions on how to use the different capabilities of AWDIT.
+For a concise description of how to reproduce experiments from the paper, see [REPRODUCE.md](./REPRODUCE.md).
+
+The structure of the artifact is shown below:
+
+```
+AWDIT
+│   README.md               # This file
+│   REPRODUCE.md            # Instructions for reproducing experiments
+│   ...
+│
+└───docker
+│   │   image.tar.gz        # Docker image capabable of running experiments
+│   │   Dockerfile          # The docker build script used to build the image
+│
+└───res
+│   └───bench               # Benchmarks
+│   └───tests               # Tests
+│
+└───results                 # Results of the benchmarks
+│
+└───scripts                 # Python and shell scripts to create and run benchmarks
+│   │   reproduce-fig7.sh   # Reproduce figure 7
+│   │   reproduce-all.sh    # Reproduce all figures
+│   │   ...
+│
+└───src                     # The Rust source code for AWDIT
+│
+└───tools                   # Other tools for comparison
+```
+
 ## Dependencies
 
 Running the tool requires Rust.
