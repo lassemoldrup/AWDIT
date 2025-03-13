@@ -19,18 +19,42 @@ RUN cargo build --release --manifest-path tools/dbcop/Cargo.toml
 
 FROM ubuntu:24.04
 
-RUN apt-get update && apt-get install -y python3 python3-pip python-is-python3 openjdk-21-jre
+# Install dependencies
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y software-properties-common; \
+    add-apt-repository ppa:sosy-lab/benchmarking; \
+    apt-get install -y --no-install-recommends \
+    python3 python3-pip python-is-python3 openjdk-21-jre benchexec git g++ make cmake zlib1g-dev libgmp3-dev fuse-overlayfs
+RUN rm -rf /var/lib/apt/lists/*
 
-WORKDIR /awdit
-RUN mkdir -p target/release
-RUN mkdir -p tools/dbcop/target/release
-COPY --from=build /awdit/target/release/awdit target/release/awdit
-COPY --from=build /awdit/tools/dbcop/target/release/dbcop tools/dbcop/target/release/dbcop
+# Install Monosat
+RUN git clone https://github.com/sambayless/monosat.git
+RUN cd monosat && cmake -DPYTHON=ON . && make && make install
+
+# Create non-root user
+RUN useradd -ms /bin/bash user
+WORKDIR /home/user/awdit
+
+# Copy files
 COPY tools tools/
-COPY scripts scripts/
-
-# Build tools
 RUN cd tools/CausalC+ && pip install --break-system-packages -r requirements.txt
 RUN cd tools/mono && pip install --break-system-packages -r requirements.txt
+COPY --from=build /awdit/tools/dbcop/target/release/dbcop tools/dbcop/target/release/dbcop
+COPY --from=build /awdit/target/release/awdit target/release/awdit
+COPY scripts scripts/
+COPY docker/init-runexec.sh /init-runexec.sh
 
-ENTRYPOINT ["/bin/bash"]
+RUN chown -R user .
+# Set non-root user as default
+USER user
+
+# Create output directory for DBCop
+RUN mkdir -p /home/user/awdit/dbcop-out
+
+# Create volume for results
+RUN mkdir -p /home/user/awdit/results
+VOLUME /home/user/awdit/results
+
+ENTRYPOINT [ "/init-runexec.sh" ]
+CMD [ "bash" ]

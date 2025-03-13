@@ -1005,7 +1005,7 @@ mod tests {
 
     use super::History;
 
-    #[test_resources("res/tests/causal/**/*.txt")]
+    #[test_resources("histories/tests/causal/**/*.txt")]
     fn test_causal(file: &str) {
         let history = History::parse_test_history(file).unwrap();
         let mut checker = history.checker(ReportMode::First, |_| {});
@@ -1014,7 +1014,7 @@ mod tests {
         assert!(checker.check_read_committed());
     }
 
-    #[test_resources("res/tests/read-atomic/**/*.txt")]
+    #[test_resources("histories/tests/read-atomic/**/*.txt")]
     fn test_read_atomic(file: &str) {
         let history = History::parse_test_history(file).unwrap();
         let mut checker = history.checker(ReportMode::First, |_| {});
@@ -1023,7 +1023,7 @@ mod tests {
         assert!(checker.check_read_committed());
     }
 
-    #[test_resources("res/tests/read-committed/**/*.txt")]
+    #[test_resources("histories/tests/read-committed/**/*.txt")]
     fn test_read_committed(file: &str) {
         let history = History::parse_test_history(file).unwrap();
         let mut checker = history.checker(ReportMode::First, |violation| println!("{violation}"));
@@ -1032,7 +1032,7 @@ mod tests {
         assert!(checker.check_read_committed());
     }
 
-    #[test_resources("res/tests/none/**/*.txt")]
+    #[test_resources("histories/tests/none/**/*.txt")]
     fn test_inconsistent(file: &str) {
         let history = History::parse_test_history(file).unwrap();
         let mut checker = history.checker(ReportMode::First, |_| {});

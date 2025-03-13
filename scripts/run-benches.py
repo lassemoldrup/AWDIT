@@ -2,10 +2,11 @@ import subprocess
 import os
 import sys
 import csv
+from pathlib import Path
 from datetime import datetime
 
-time_limit = '600' # seconds
-mem_limit = str(55*10**9) # bytes
+time_limit = os.environ.get('TIME_LIMIT', '600') # seconds
+mem_limit = os.environ.get('MEM_LIMIT', str(45*10**9)) # bytes
 
 date = datetime.now().strftime('%Y-%m-%d')
 
@@ -31,7 +32,7 @@ def run_benchexec(cmd):
             return 'OOM', 'OOM', None
         if key == 'returnvalue':
             if val != '0':
-                with open('errors.log', 'a') as err_file:
+                with open('results/errors.log', 'a') as err_file:
                     err_file.write(f'WARN: Non-zero exit code {val}: {" ".join(cmd)}\n')
             exitcode = val
     return time, memory, exitcode
@@ -46,7 +47,7 @@ def run_ours(history, isolation):
                 result = 'C'
             elif line.startswith('Inconsistent'):
                 result = 'I'
-                with open('errors.log', 'a') as err_file:
+                with open('results/errors.log', 'a') as err_file:
                     err_file.write(f'Inconsistent. Ours ({isolation}): {history}\n')
     return time, memory, result
 
@@ -60,7 +61,7 @@ def run_plume(history, isolation):
                 result = 'C'
             elif line.startswith('REJECT'):
                 result = 'I'
-                with open('errors.log', 'a') as err_file:
+                with open('results/errors.log', 'a') as err_file:
                     err_file.write(f'Inconsistent. Plume ({isolation}): {history}\n')
     return time, memory, result
 
@@ -73,7 +74,7 @@ def run_polysi(history):
                 result = 'C'
             elif line.startswith('[[[[ REJECT ]]]]'):
                 result = 'I'
-                with open('errors.log', 'a') as err_file:
+                with open('results/errors.log', 'a') as err_file:
                     err_file.write(f'Inconsistent. PolySI: {history}\n')
     return time, memory, result
 
@@ -84,7 +85,7 @@ def run_dbcop(history):
         result = 'C'
     elif exitcode != None:
         result = 'I'
-        with open('errors.log', 'a') as err_file:
+        with open('results/errors.log', 'a') as err_file:
             err_file.write(f'Inconsistent. DBCop: {history}\n')
     return time, memory, result
 
@@ -97,7 +98,7 @@ def run_causalc_plus(history):
                 result = 'C'
             elif line.startswith('REJECT'):
                 result = 'I'
-                with open('errors.log', 'a') as err_file:
+                with open('results/errors.log', 'a') as err_file:
                     err_file.write(f'Inconsistent. CausalC+: {history}\n')
     return time, memory, result
 
@@ -110,7 +111,7 @@ def run_mono(history):
                 result = 'C'
             elif line.startswith('REJECT'):
                 result = 'I'
-                with open('errors.log', 'a') as err_file:
+                with open('results/errors.log', 'a') as err_file:
                     err_file.write(f'Inconsistent. TCC-Mono: {history}\n')
     return time, memory, result
 
@@ -248,24 +249,38 @@ def ops_series(in_path, results_path, isolation, tools):
         headers.add((db, script, threads))
 
 if __name__ == '__main__':
-    if len(sys.argv) < 4:
-        print('usage: python scripts/run-benches.py <txn OR sess OR ops> path/to/benches results/path')
+    if len(sys.argv) < 5:
+        print('usage: python scripts/run-benches.py <txn OR sess OR ops> <all OR awdit-plume OR awdit> path/to/benches results/path')
         exit(1)
     txn_sess_ops = sys.argv[1]
-    in_path = sys.argv[2]
-    results_path = sys.argv[3]
+    comparison = sys.argv[2]
+    in_path = sys.argv[3]
+    results_path = sys.argv[4]
 
     tools = ['ours', 'plume', 'polysi', 'dbcop', 'causalc+', 'mono']
+    isolations = ['rc', 'ra', 'cc']
+    if comparison == 'all':
+        isolations = ['cc']
+    elif comparison == 'awdit-plume':
+        tools = ['ours', 'plume']
+    elif comparison == 'awdit':
+        tools = ['ours']
+    else:
+        print('The second argument should be either `all`, `awdit-plume`, or `awdit`')
+        exit(1)
+
+    Path(results_path).mkdir(parents=True, exist_ok=True)
+
     if txn_sess_ops == 'txn':
-        for isolation in ['rc', 'ra', 'cc']:
+        for isolation in isolations:
             txn_series(in_path, results_path, isolation, tools)
         sort_results(results_path)
     elif txn_sess_ops == 'sess':
-        for isolation in ['rc', 'ra', 'cc']:
+        for isolation in isolations:
             session_series(in_path, results_path, isolation, tools)
         sort_results(results_path)
     elif txn_sess_ops == 'ops':
-        for isolation in ['rc', 'ra', 'cc']:
+        for isolation in isolations:
             ops_series(in_path, results_path, isolation, tools)
         sort_results(results_path)
     else:

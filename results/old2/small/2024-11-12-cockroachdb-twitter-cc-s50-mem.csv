@@ -1,7 +1,0 @@
-txns,ours (MiB),plume (MiB),polysi (MiB),dbcop (MiB),causalc+ (MiB),mono (MiB)
-1024,N/A,N/A,N/A,N/A,N/A,N/A
-2048,N/A,N/A,N/A,N/A,N/A,N/A
-4096,N/A,N/A,N/A,N/A,DNF,N/A
-8192,N/A,N/A,N/A,DNF,DNF,N/A
-16384,N/A,N/A,N/A,DNF,DNF,N/A
-32768,N/A,N/A,N/A,DNF,DNF,N/A

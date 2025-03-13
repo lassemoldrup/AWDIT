@@ -1,5 +1,5 @@
 /target
 # results
-res/bench
+histories/bench
 dbcop-out
 output.log

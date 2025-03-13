@@ -15,7 +15,7 @@ AWDIT
 │   │   image.tar.gz        # Docker image capabable of running experiments
 │   │   Dockerfile          # The docker build script used to build the image
 │
-└───res
+└───histories
 │   └───bench               # Benchmarks
 │   └───tests               # Tests
 │
@@ -33,7 +33,7 @@ AWDIT
 
 ## Dependencies
 
-Running the tool requires Rust.
+Running the tool requires Rust (>= 1.85).
 The recommended way of installing Rust is through [rustup](https://rustup.rs).
 
 ## Running the tool
