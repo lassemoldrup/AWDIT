@@ -31,6 +31,7 @@ RUN rm -rf /var/lib/apt/lists/*
 # Install Monosat
 RUN git clone https://github.com/sambayless/monosat.git
 RUN cd monosat && cmake -DPYTHON=ON . && make && make install
+RUN rm -rf monosat
 
 # Create non-root user
 RUN useradd -ms /bin/bash user
