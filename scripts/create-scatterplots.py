@@ -77,10 +77,10 @@ if __name__ == '__main__':
     with open(os.path.join(path, f'{date}-{name}.csv'), 'w', newline='') as csvfile:
         writer = csv.writer(csvfile)
         writer.writerow(headers)
-        for k in times['rc'].keys():
-            ts = [times[iso][k] for iso in isolations]
-            res = [results[iso][k] for iso in isolations]
-            mem = [mems[iso][k] for iso in isolations]
+        for k in times[next(iter(isolations_present))].keys():
+            ts = [times[iso][k] for iso in isolations if iso in isolations_present]
+            res = [results[iso][k] for iso in isolations if iso in isolations_present]
+            mem = [mems[iso][k] for iso in isolations if iso in isolations_present]
             sts = stats[k]
             writer.writerows([itertools.chain.from_iterable(row) for row in zip(sts, *ts, *mem, *res)])
 

@@ -33,7 +33,7 @@ def run_benchexec(cmd):
             return 'OOM', 'OOM', None
         if key == 'returnvalue':
             if val != '0':
-                with open('results/errors.log', 'a') as err_file:
+                with open('errors.log', 'a') as err_file:
                     err_file.write(f'WARN: Non-zero exit code {val}: {" ".join(cmd)}\n')
             exitcode = val
     return time, memory, exitcode
@@ -48,7 +48,7 @@ def run_ours(history, isolation):
                 result = 'C'
             elif line.startswith('Inconsistent'):
                 result = 'I'
-                with open('results/errors.log', 'a') as err_file:
+                with open('errors.log', 'a') as err_file:
                     err_file.write(f'Inconsistent. Ours ({isolation}): {history}\n')
     return time, memory, result
 
@@ -62,7 +62,7 @@ def run_plume(history, isolation):
                 result = 'C'
             elif line.startswith('REJECT'):
                 result = 'I'
-                with open('results/errors.log', 'a') as err_file:
+                with open('errors.log', 'a') as err_file:
                     err_file.write(f'Inconsistent. Plume ({isolation}): {history}\n')
     return time, memory, result
 
@@ -75,7 +75,7 @@ def run_polysi(history):
                 result = 'C'
             elif line.startswith('[[[[ REJECT ]]]]'):
                 result = 'I'
-                with open('results/errors.log', 'a') as err_file:
+                with open('errors.log', 'a') as err_file:
                     err_file.write(f'Inconsistent. PolySI: {history}\n')
     return time, memory, result
 
@@ -86,7 +86,7 @@ def run_dbcop(history):
         result = 'C'
     elif exitcode != None:
         result = 'I'
-        with open('results/errors.log', 'a') as err_file:
+        with open('errors.log', 'a') as err_file:
             err_file.write(f'Inconsistent. DBCop: {history}\n')
     return time, memory, result
 
@@ -99,7 +99,7 @@ def run_causalc_plus(history):
                 result = 'C'
             elif line.startswith('REJECT'):
                 result = 'I'
-                with open('results/errors.log', 'a') as err_file:
+                with open('errors.log', 'a') as err_file:
                     err_file.write(f'Inconsistent. CausalC+: {history}\n')
     return time, memory, result
 
@@ -112,7 +112,7 @@ def run_mono(history):
                 result = 'C'
             elif line.startswith('REJECT'):
                 result = 'I'
-                with open('results/errors.log', 'a') as err_file:
+                with open('errors.log', 'a') as err_file:
                     err_file.write(f'Inconsistent. TCC-Mono: {history}\n')
     return time, memory, result
 
