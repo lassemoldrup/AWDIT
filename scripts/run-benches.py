@@ -6,7 +6,8 @@ from pathlib import Path
 from datetime import datetime
 
 time_limit = os.environ.get('TIME_LIMIT', '600') # seconds
-mem_limit = os.environ.get('MEM_LIMIT', str(45*10**9)) # bytes
+mem_limit = os.environ.get('MEM_LIMIT', '55') # GiB
+mem_limit = f'{int(mem_limit) * 1024 * 1024 * 1024}'
 
 date = datetime.now().strftime('%Y-%m-%d')
 

@@ -39,6 +39,7 @@ WORKDIR /home/user/awdit
 
 # Copy files
 COPY tools tools/
+RUN rm -rf tools/dbcop
 RUN cd tools/CausalC+ && pip install --break-system-packages -r requirements.txt
 RUN cd tools/mono && pip install --break-system-packages -r requirements.txt
 COPY --from=build /awdit/tools/dbcop/target/release/dbcop tools/dbcop/target/release/dbcop

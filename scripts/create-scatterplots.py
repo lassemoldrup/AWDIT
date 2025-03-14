@@ -1,7 +1,17 @@
 import sys
 import os
 import csv
+import itertools
 from datetime import datetime
+
+isolations = ['rc', 'ra', 'cc']
+isolations_present = set()
+
+def add_isolation(headers, iso):
+    if len(isolations_present) == 1:
+        return headers
+    else:
+        return [' '.join([f'{header.split()[0]}_{iso}'] + header.split()[1:]) for header in headers]
 
 if __name__ == '__main__':
     if len(sys.argv) < 3:
@@ -12,50 +22,65 @@ if __name__ == '__main__':
 
     date = datetime.now().strftime('%Y-%m-%d')
 
-    for isolation in ['rc', 'ra', 'cc']:
-        time_headers = None
-        mem_headers = None
-        res_headers = None
-        headers = ['database', 'script', 'txns', 'sessions', 'events', 'keys', 'ops_per_txn']
-        
-        times = {}
-        mems = {}
-        results = {}
-        stats = {}
-        for entry in os.listdir(path):
-            if not entry.endswith('.csv') or (not f'-{isolation}-' in entry and not entry.endswith('-stats.csv')):
-                continue
-            
-            with open(os.path.join(path, entry), 'r') as csvfile:
-                reader = csv.reader(csvfile)
-                rows = list(reader)
-                if entry.endswith('-time.csv'):
-                    if time_headers is None:
-                        time_headers = rows[0][1:]
-                    times[entry.removesuffix('-time.csv')] = [row[1:] for row in rows[1:]]
-                elif entry.endswith('-mem.csv'):
-                    if mem_headers is None:
-                        mem_headers = rows[0][1:]
-                    mems[entry.removesuffix('-mem.csv')] = [row[1:] for row in rows[1:]]
-                elif entry.endswith('-res.csv'):
-                    if res_headers is None:
-                        res_headers = rows[0][1:]
-                    results[entry.removesuffix('-res.csv')] = [row[1:] for row in rows[1:]]
-                elif entry.endswith('-stats.csv'):
-                    elems = entry.split('-')[:-1]
-                    elems.insert(5, isolation)
-                    stats['-'.join(elems)] = [elems[3:5] + row[1:] for row in rows[1:]]
-        
-        if time_headers is None or res_headers is None:
-            print(f'Missing headers for {isolation}, skipping')
-            continue
-        with open(os.path.join(path, f'{date}-{name}-{isolation}.csv'), 'w', newline='') as csvfile:
-            writer = csv.writer(csvfile)
+    time_headers = {iso: None for iso in isolations}
+    mem_headers = {iso: None for iso in isolations}
+    res_headers = {iso: None for iso in isolations}
+    headers = ['database', 'script', 'txns', 'sessions', 'events', 'keys', 'ops_per_txn']
+    
+    times = {iso: {} for iso in isolations}
+    mems = {iso: {} for iso in isolations}
+    results = {iso: {} for iso in isolations}
+    stats = {}
 
-            writer.writerow(headers + time_headers + mem_headers + res_headers)
-            for k, ts in times.items():
-                res = results[k]
-                mem = mems[k]
-                sts = stats[k]
-                writer.writerows([s + t + m + r for s, t, m, r in zip(sts, ts, mem, res)])
+    files = list(os.listdir(path))
+    for entry in files:
+        for iso in isolations:
+            if f'-{iso}' in entry:
+                isolations_present.add(iso)
+    
+    for entry in files:
+        if not entry.endswith('.csv'):
+            continue
+        
+        with open(os.path.join(path, entry), 'r') as csvfile:
+            reader = csv.reader(csvfile)
+            rows = list(reader)
+            if entry.endswith('-time.csv'):
+                _,_,_,db,script,iso,_,_ = entry.split('-')
+                if time_headers[iso] is None:
+                    time_headers[iso] = add_isolation(rows[0][1:], iso)
+                times[iso][(db,script)] = [row[1:] for row in rows[1:]]
+            elif entry.endswith('-mem.csv'):
+                _,_,_,db,script,iso,_,_ = entry.split('-')
+                if mem_headers[iso] is None:
+                    mem_headers[iso] = add_isolation(rows[0][1:], iso)
+                mems[iso][(db,script)] = [row[1:] for row in rows[1:]]
+            elif entry.endswith('-res.csv'):
+                _,_,_,db,script,iso,_,_ = entry.split('-')
+                if res_headers[iso] is None:
+                    res_headers[iso] = add_isolation(rows[0][1:], iso)
+                results[iso][(db,script)] = [row[1:] for row in rows[1:]]
+            elif entry.endswith('-stats.csv'):
+                _,_,_,db,script,_,_ = entry.split('-')
+                stats[(db,script)] = [[db, script] + row[1:] for row in rows[1:]]
+    
+    for iso in isolations:
+        if time_headers[iso] is not None:
+            headers += time_headers[iso]
+    for iso in isolations:
+        if mem_headers[iso] is not None:
+            headers += mem_headers[iso]
+    for iso in isolations:
+        if res_headers[iso] is not None:
+            headers += res_headers[iso]
+
+    with open(os.path.join(path, f'{date}-{name}.csv'), 'w', newline='') as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(headers)
+        for k in times['rc'].keys():
+            ts = [times[iso][k] for iso in isolations]
+            res = [results[iso][k] for iso in isolations]
+            mem = [mems[iso][k] for iso in isolations]
+            sts = stats[k]
+            writer.writerows([itertools.chain.from_iterable(row) for row in zip(sts, *ts, *mem, *res)])
 
