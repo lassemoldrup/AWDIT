@@ -1,7 +1,30 @@
-# AWDIT Artifact
+# Getting Started
 
-This README contains instructions on how to use the different capabilities of AWDIT.
-For a concise description of how to reproduce experiments from the paper, see [REPRODUCE.md](./REPRODUCE.md).
+We provide two options for evaluating AWDIT:
+- A Docker image (preferred)
+- A VirtualBox VM image
+
+## Requirements
+
+### Docker Image
+
+To run the Docker image you need
+- A Linux system with kernel version >= 4.5
+- Docker
+
+**Important:** The Docker image will not work outside of Linux, since we use [BenchExec](https://github.com/sosy-lab/benchexec) for running benchmarks, which uses Linux cgroups provided by the host machine. See [this document](https://github.com/sosy-lab/benchexec/blob/26ea602ced1bf339db124efb3cb53bc5dd94098c/doc/benchexec-in-container.md) for more information.
+
+### VM Image
+
+We also provide VirtualBox images for x86 and ARM matching the above requirements.
+However, VMs do not produce reliable performance results, so please only use this as a last resort. 
+
+The image was tested with VirtualBox version X.X
+
+To use the image, log in as `user` with password `user`.
+Then follow along from the folder `AWDIT` on the desktop.
+
+## Structure of the Artifact
 
 The structure of the artifact is shown below:
 
@@ -29,6 +52,43 @@ AWDIT
 └───src                     # The Rust source code for AWDIT
 │
 └───tools                   # Other tools for comparison
+```
+
+## Running the Docker Image
+
+Running the Docker image will produce a shell capable of running AWDIT and all comparison tools.
+To run the image, do the following.
+
+### 1
+
+Load the image:
+
+```shell
+docker load -i docker/image.tar.gz
+```
+
+Optionally, you can pass a platform (`linux/amd64` or `linux/arm64`, depending on your system):
+
+```shell
+docker load -i docker/image.tar.gz --platform linux/amd64
+```
+
+### 2
+
+Run the container:
+
+```shell
+docker run --name awdit-container --privileged --cap-drop=all -ti -v $(pwd)/results:/home/user/awdit/results -v $(pwd)/histories:/home/user/awdit/histories awdit-artifact
+```
+
+To exit the container, simply run `exit`.
+
+**Note:** The reason for `--privileged` is that we use [BenchExec](https://github.com/sosy-lab/benchexec) for running benchmarks, which uses Linux cgroups. To mitigate any risks when running like this, we use `--cap-drop=all` to disable as many capabilities of the container a possible, and the active user in the Docker container will be non-root. See [this document](https://github.com/sosy-lab/benchexec/blob/26ea602ced1bf339db124efb3cb53bc5dd94098c/doc/benchexec-in-container.md) for more information.
+
+**Note:** To run the container more than once, run the following to delete the old container:
+
+```shell
+docker rm -v awdit-container
 ```
 
 ## Dependencies

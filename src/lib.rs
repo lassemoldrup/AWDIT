@@ -12,7 +12,7 @@ use itertools::Itertools;
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde::Serialize;
 use smallvec::SmallVec;
-use util::{Captures, intersect_map};
+use util::intersect_map;
 use vector_clock::VectorClock;
 
 pub mod checker;

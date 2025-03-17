@@ -29,14 +29,10 @@ impl<T> GetTwoMut<T> for [T] {
     }
 }
 
-pub trait Captures<'a> {}
-
-impl<'a, T: ?Sized> Captures<'a> for T {}
-
 pub fn intersect_map<'m, 's, K, V, H>(
     map: &'m HashMap<K, V, H>,
     set: &'s HashSet<K, H>,
-) -> impl Iterator<Item = (&'m K, &'m V)> + Captures<'s>
+) -> impl Iterator<Item = (&'m K, &'m V)>
 where
     K: Hash + Eq,
     H: BuildHasher,

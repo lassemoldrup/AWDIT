@@ -2,7 +2,6 @@ use std::iter;
 
 use crate::TransactionId;
 use crate::fenwick::MinFenwickTree;
-use crate::util::Captures;
 
 /// A data structure for storing partial orders over transactions in `k`
 /// sessions. Supports `O(k^2 log n)` edge insertion and `O(k^2 log n)`
@@ -71,10 +70,7 @@ impl PartialOrder {
         }
     }
 
-    pub fn successors(
-        &self,
-        t: TransactionId,
-    ) -> impl Iterator<Item = TransactionId> + Captures<'_> {
+    pub fn successors(&self, t: TransactionId) -> impl Iterator<Item = TransactionId> {
         (0..self.edges.len()).flat_map(move |i2| {
             let num_txs = self.edges[i2].len();
             let j2 = self.edges[t.0][i2].query(t.1).min(num_txs);

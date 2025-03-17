@@ -1,8 +1,6 @@
 use std::cmp;
 use std::ops::{Index, IndexMut};
 
-use crate::util::Captures;
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VectorClock(Box<[i32]>);
 
@@ -39,7 +37,7 @@ impl VectorClock {
         *entry = cmp::min(*entry, value as i32);
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = i32> + Captures<'_> {
+    pub fn iter(&self) -> impl Iterator<Item = i32> {
         self.0.iter().copied()
     }
 }

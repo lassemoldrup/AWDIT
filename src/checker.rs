@@ -601,8 +601,7 @@ impl PartialCommitOrder {
         &self,
         tid: TransactionId,
         graph: &'g WriteReadGraph,
-    ) -> impl Iterator<Item = (TransactionId, Option<CoJustification>)> + Captures<'_> + Captures<'g>
-    {
+    ) -> impl Iterator<Item = (TransactionId, Option<CoJustification>)> {
         graph.rev_hb_edges(tid).map(|t| (t, None)).chain(
             self.rev_order[tid.0][tid.1]
                 .iter()
@@ -855,7 +854,7 @@ impl WriteReadGraph {
     fn rev_hb_edges(
         &self,
         TransactionId(s_idx, t_idx): TransactionId,
-    ) -> impl Iterator<Item = TransactionId> + Captures<'_> {
+    ) -> impl Iterator<Item = TransactionId> {
         let session_pred = t_idx
             .checked_sub(1)
             .map(|t_idx| TransactionId(s_idx, t_idx))
