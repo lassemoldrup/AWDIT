@@ -11,7 +11,7 @@ COPY src src/
 COPY tools/dbcop tools/dbcop/
 
 # Build AWDIT
-RUN cargo build --release
+RUN cargo build --release --features dbcop
 
 # Build DBCop
 RUN cargo build --release --manifest-path tools/dbcop/Cargo.toml

@@ -558,7 +558,12 @@ fn main() -> anyhow::Result<()> {
             };
 
             match args.format {
-                HistoryFormat::Plume | HistoryFormat::DbCop => {
+                HistoryFormat::Plume => {
+                    // Remove the init session
+                    history.sessions.pop();
+                }
+                #[cfg(feature = "dbcop")]
+                HistoryFormat::DbCop => {
                     // Remove the init session
                     history.sessions.pop();
                 }

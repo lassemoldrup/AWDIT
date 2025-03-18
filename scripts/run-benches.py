@@ -266,6 +266,9 @@ if __name__ == '__main__':
         tools = ['ours', 'plume']
     elif comparison == 'awdit':
         tools = ['ours']
+    elif comparison == 'awdit-plume-rc':
+        tools = ['ours', 'plume']
+        isolations = ['rc']
     else:
         print('The second argument should be either `all`, `awdit-plume`, or `awdit`')
         exit(1)

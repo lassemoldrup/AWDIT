@@ -69,7 +69,7 @@ To check that everything is working, inside the container, run
 scripts/test-run.sh
 ```
 
-This will run AWDIT and Plume on a set small benchmarks and should take a few minutes.
+This will run AWDIT and Plume at the RC isolation level on a set of small benchmarks and should take around half a minute.
 When done, exit the container with `exit`. To retrieve the results from the container, run
 
 ```shell
@@ -79,7 +79,49 @@ docker cp awdit-container:/home/user/awdit/results .
 There should now be a file `results/small.csv` containing the results of the experiment.
 This file should `results/small-expected.csv` (modulo performance difference).
 
+## Note
+
+- In the results, `DNF` means that the tool timed out, `OOM` means that the tool exceded the memory limit.
+
+- You may get occasional warnings like: `WARNING - System has swapped during benchmarking. Benchmark results are unreliable!`. This is safe to ignore, since it seems to happen even if the program under test is using little memory, and we have not observe it to affect performance. This is, of course, assuming that the system is not running out of memory, in which case a lower memory limit should be set.
+
 # Step-by-Step Instructions
+
+For reference, the structure of the artifact is shown below:
+
+```
+AWDIT
+│   README.md                   # This file
+│   ...
+│
+└───docker
+│   │   image.tar.gz            # Docker image capabable of running experiments
+│   │   Dockerfile              # The docker build script used to build the image
+│   │   init-runexec.sh         # Init script for the Docker container
+│
+└───histories
+│   └───bench                   # Benchmarks
+│   └───tests                   # Tests
+│
+└───results                     # Results of the benchmarks
+│   │   fig7-tpcc-expected.csv  # Expected results for figure 7 TPC-C
+│   │   ...
+│
+└───scripts                     # Python and shell scripts to create and run benchmarks
+│   │   test-run.sh             # Test script
+│   │   reproduce-fig7.sh       # Reproduce figure 7
+│   │   reproduce-all.sh        # Reproduce all figures
+│   │   ...
+│
+└───src                         # The Rust source code for AWDIT
+│
+└───tools                       # Other tools for comparison
+    │ CausalC+                  # Datalog implementation by Plume authors
+    │ dbcop                     # DBCop
+    │ mono                      # MonoSAT solver by Plume authors
+    │ Plume                     # Plume (artifact version)
+    │ PolySI                    # PolySI (artifact version)
+```
 
 We first give a summary of our claims and then instructions for evaluating each.
 
@@ -98,8 +140,6 @@ A summary of results and the time/memory requirements to reproduce them are show
 | fig7   | 5 hours         |              10 min |            32 GiB |
 | fig8   | 71 hours        |              65 min |            37 GiB |
 | fig9   | 2 min           |               2 min |           2.3 GiB |
-
-**Note**: In the results, `DNF` means that the tool timed out, `OOM` means that the tool exceded the memory limit.
 
 ## Figure 7
 
@@ -161,86 +201,115 @@ These can be compared to the expected results: `results/fig8-rc-expected.csv`, `
 
 ## Figure 9
 
-The final experiment...
+The final experiment tests the scaling of AWDIT, when varying the number of transactions, sessions, and operations per transaction, i.e., transaction size (while keeping the total history size fixed).
 
-## Structure of the Artifact
+We find that AWDIT's performance scales linearly with transaction count, as expected with bounded size transactions.
+As expected, number of sessions does not affect AWDIT's running time in RC and RA, whereas CC has a roughly linear scaling.
+Finally, we find that transaction size only slightly affects RC and RA, as predicted.
 
-The structure of the artifact is shown below:
+To reproduce Figure 9, run the Docker container as above, and inside run
 
+```shell
+scripts/reproduce-fig9.sh
 ```
-AWDIT
-│   README.md                   # This file
-│   REPRODUCE.md                # Instructions for reproducing experiments
-│   ...
-│
-└───docker
-│   │   image.tar.gz            # Docker image capabable of running experiments
-│   │   Dockerfile              # The docker build script used to build the image
-│
-└───histories
-│   └───bench                   # Benchmarks
-│   └───tests                   # Tests
-│
-└───results                     # Results of the benchmarks
-│   │   fig7-tpcc-expected.csv  # Expected results for figure 7 TPC-C
-│   │   ...
-│
-└───scripts                     # Python and shell scripts to create and run benchmarks
-│   │   test-run.sh             # Test script
-│   │   reproduce-fig7.sh       # Reproduce figure 7
-│   │   reproduce-all.sh        # Reproduce all figures
-│   │   ...
-│
-└───src                         # The Rust source code for AWDIT
-│
-└───tools                       # Other tools for comparison
+
+This should only take a few minutes, and use little memory
+After the shell scripts finishes, exit the docker image with `exit`, and run
+
+```shell
+docker cp awdit-container:/home/user/awdit/results .
 ```
+
+This will produce three files: `results/fig9-txn.csv`, `results/fig9-sess.csv`, and `results/fig9-ops.csv`, containing the running times for transaction scaling, sessions scaling, and transaction size scaling, respectively.
+These can be compared to the expected results: `results/fig9-txn-expected.csv`, `results/fig8-sess-expected.csv`, and `results/fig9-ops-expected.csv`.
+
+# Manual Usage of AWDIT
+
+Other than using the provided scripts, AWDIT can be run as a standalone program.
+Here, we provide information on how to do so.
 
 ## Dependencies
 
-Running the tool requires Rust (>= 1.85).
+Building AWDIT requires Rust (>= 1.85).
 The recommended way of installing Rust is through [rustup](https://rustup.rs).
 
-## Running the tool
+If support for the DBCop format is desired (see the [formats](#formats) section), `libclang` is required.
 
-This section provides a quick overview of the features of the tool.
-To see all options, use the `--help` flag.
-Before running, first update the submodules and build the tool:
+## Building
+To build, first update the submodules and run `cargo`:
 
 ```bash
-$ git submodule update --init --recursive
-$ cargo build --release
+git submodule update --init --recursive
+cargo build --release
 ```
 
-TODO: explain how to check consistency.
+If support for the DBCop format is desired, add a feature flag:
+
+```bash
+cargo build --release --features dbcop
+```
+
+## Usage
+
+We provide a brief introduction to the capabilities of the AWDIT tool.
+For more information, run AWDIT with the `--help` flag:
+```bash
+target/release/awdit --help
+```
+Or, for information about a specific command:
+```bash
+target/release/awdit check --help
+```
+
+### Checking consistency
+
+To check a history for consistency, use the `check` command:
+
+```bash
+target/release/awdit check -i <ISOLATION_LEVEL> path/to/history
+```
+
+The three possible values for `ISOLATION_LEVEL` are `read-committed`, `read-atomic`, and `causal`.
+By default, the history will be assumed to be in the `plume` format (see the [formats](#formats) section for more information).
+
+### Generating histories
 
 To generate a random history, run
 
 ```bash
-$ target/release/awdit generate output/path
+target/release/awdit generate output/path
 ```
 
-By default, this will generate a history of 20 events in the `plume` format (see the [formats](#formats) section for more information).
+By default, this will generate a history of 20 events in the `plume` format.
+
+### Converting histories
 
 To convert from one format to another, run
 
 ```bash
-$ target/release/awdit convert -f <FROM_FORMAT> -t <TO_FORMAT> from/path to/path
+target/release/awdit convert -f <FROM_FORMAT> -t <TO_FORMAT> from/path to/path
 ```
+
+### Getting statistics about a history
 
 To get statistics about a history, run
 
 ```bash
-$ target/release/awdit stats path/to/history
+target/release/awdit stats path/to/history
 ```
 
 By default, the history is expected to be in the `plume` format, but the `--format` flag can be supplied to use a different format.
+
+For JSON output, use the `--json` flag.
 
 ## Formats
 
 The tool supports four history formats:
 
 - `plume`: a text-based format used by Plume and PolySI. Histories in this format is a single `.txt` file.
-- `dbcop`: a binary format used by DBCop. Histories in this format should be directories with a single file called `history.bincode`.
+  
+- `dbcop`: a binary format used by DBCop. Histories in this format should be directories with a single file called `history.bincode`. Requires the `dbcop` feature.
+  
 - `cobra`: a binary format used by DBCobra. Histories in this format are directories with `.log` files (one for each session).
+  
 - `test`: a human-friendly text-based format useful for writing tests. A history in this format is a single `.txt` file.
