@@ -1,7 +1,7 @@
 #!/bin/bash
 set -eu
 
-export TIME_LIMIT=${TIME_LIMIT:-7200} # seconds
+export TIME_LIMIT=${TIME_LIMIT:-600} # seconds
 export MEM_LIMIT=${MEM_LIMIT:-55} # GiB
 
 echo "Reproducing Figure 9 from the paper..."

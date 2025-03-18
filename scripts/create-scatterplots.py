@@ -46,23 +46,23 @@ if __name__ == '__main__':
             reader = csv.reader(csvfile)
             rows = list(reader)
             if entry.endswith('-time.csv'):
-                _,_,_,db,script,iso,_,_ = entry.split('-')
+                _,_,_,db,script,iso,num,_ = entry.split('-')
                 if time_headers[iso] is None:
                     time_headers[iso] = add_isolation(rows[0][1:], iso)
-                times[iso][(db,script)] = [row[1:] for row in rows[1:]]
+                times[iso][(db,script,num)] = [row[1:] for row in rows[1:]]
             elif entry.endswith('-mem.csv'):
-                _,_,_,db,script,iso,_,_ = entry.split('-')
+                _,_,_,db,script,iso,num,_ = entry.split('-')
                 if mem_headers[iso] is None:
                     mem_headers[iso] = add_isolation(rows[0][1:], iso)
-                mems[iso][(db,script)] = [row[1:] for row in rows[1:]]
+                mems[iso][(db,script,num)] = [row[1:] for row in rows[1:]]
             elif entry.endswith('-res.csv'):
-                _,_,_,db,script,iso,_,_ = entry.split('-')
+                _,_,_,db,script,iso,num,_ = entry.split('-')
                 if res_headers[iso] is None:
                     res_headers[iso] = add_isolation(rows[0][1:], iso)
-                results[iso][(db,script)] = [row[1:] for row in rows[1:]]
+                results[iso][(db,script, num)] = [row[1:] for row in rows[1:]]
             elif entry.endswith('-stats.csv'):
-                _,_,_,db,script,_,_ = entry.split('-')
-                stats[(db,script)] = [[db, script] + row[1:] for row in rows[1:]]
+                _,_,_,db,script,num,_ = entry.split('-')
+                stats[(db,script,num)] = [[db, script] + row[1:] for row in rows[1:]]
     
     for iso in isolations:
         if time_headers[iso] is not None:

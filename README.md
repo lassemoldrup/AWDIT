@@ -48,7 +48,7 @@ docker load -i docker/image.tar.gz --platform linux/amd64
 Run the container:
 
 ```shell
-docker run --name awdit-container --privileged --cap-drop=all -ti -v $(pwd)/results:/home/user/awdit/results -v $(pwd)/histories:/home/user/awdit/histories awdit-artifact
+docker run --name awdit-container --privileged --cap-drop=all -ti --mount type=volume,dst=/home/user/awdit/results -v $(pwd)/histories:/home/user/awdit/histories awdit-artifact
 ```
 
 To exit the container, simply run `exit`.
@@ -95,9 +95,9 @@ A summary of results and the time/memory requirements to reproduce them are show
 
 | Figure | Time (defaults) | Time (10 s, 25 GiB) | Memory (defaults) |
 | :----- | :-------------- | ------------------: | ----------------: |
-| fig7   | 5 hours         |              10 min |            50 GiB |
-| fig8   | 48 hours        |              65 min |            50 GiB |
-| fig9   | 6 min           |               6 min |           2.3 GiB |
+| fig7   | 5 hours         |              10 min |            32 GiB |
+| fig8   | 71 hours        |              65 min |            37 GiB |
+| fig9   | 2 min           |               2 min |           2.3 GiB |
 
 **Note**: In the results, `DNF` means that the tool timed out, `OOM` means that the tool exceded the memory limit.
 
@@ -169,30 +169,31 @@ The structure of the artifact is shown below:
 
 ```
 AWDIT
-│   README.md               # This file
-│   REPRODUCE.md            # Instructions for reproducing experiments
+│   README.md                   # This file
+│   REPRODUCE.md                # Instructions for reproducing experiments
 │   ...
 │
 └───docker
-│   │   image.tar.gz        # Docker image capabable of running experiments
-│   │   Dockerfile          # The docker build script used to build the image
+│   │   image.tar.gz            # Docker image capabable of running experiments
+│   │   Dockerfile              # The docker build script used to build the image
 │
 └───histories
-│   └───bench               # Benchmarks
-│   └───tests               # Tests
+│   └───bench                   # Benchmarks
+│   └───tests                   # Tests
 │
-└───results                 # Results of the benchmarks
-│   │   fig7-expected.csv   # Expected results for figure 7
+└───results                     # Results of the benchmarks
+│   │   fig7-tpcc-expected.csv  # Expected results for figure 7 TPC-C
 │   │   ...
 │
-└───scripts                 # Python and shell scripts to create and run benchmarks
-│   │   reproduce-fig7.sh   # Reproduce figure 7
-│   │   reproduce-all.sh    # Reproduce all figures
+└───scripts                     # Python and shell scripts to create and run benchmarks
+│   │   test-run.sh             # Test script
+│   │   reproduce-fig7.sh       # Reproduce figure 7
+│   │   reproduce-all.sh        # Reproduce all figures
 │   │   ...
 │
-└───src                     # The Rust source code for AWDIT
+└───src                         # The Rust source code for AWDIT
 │
-└───tools                   # Other tools for comparison
+└───tools                       # Other tools for comparison
 ```
 
 ## Dependencies
