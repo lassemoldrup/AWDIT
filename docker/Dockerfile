@@ -29,7 +29,7 @@ RUN set -eux; \
 RUN rm -rf /var/lib/apt/lists/*
 
 # Install Monosat
-RUN git clone https://github.com/sambayless/monosat.git
+RUN git clone https://github.com/lassemoldrup/monosat.git
 RUN cd monosat && cmake -DPYTHON=ON . && make && make install
 RUN rm -rf monosat
 
