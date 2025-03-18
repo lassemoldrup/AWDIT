@@ -108,41 +108,6 @@ This file should look like `results/small-expected.csv` (modulo performance diff
 
 # Step-by-step instructions
 
-For reference, the structure of the artifact is shown below:
-
-```
-AWDIT
-│
-└───docker
-│   │   awdit-artifact.tar.gz   # Docker image capable of running experiments
-│   │   Dockerfile              # The docker build script used to build the image
-│   │   init-runexec.sh         # Init script for the Docker container
-│
-└───histories (from histories.tar.gz)
-│   │   bench                   # Benchmarks
-│   │   tests                   # Tests
-│   │   violations              # Violations found
-│
-└───results                     # Results of the benchmarks
-│   │   fig7-tpcc-expected.csv  # Expected results for figure 7 TPC-C
-│   │   ...
-│
-└───scripts                     # Python and shell scripts to create and run benchmarks
-│   │   test-run.sh             # Test script
-│   │   reproduce-fig7.sh       # Reproduce figure 7
-│   │   reproduce-all.sh        # Reproduce all figures
-│   │   ...
-│
-└───src                         # The Rust source code for AWDIT
-│
-└───tools                       # Other tools for comparison
-│   │   CausalC+                # Datalog implementation by Plume authors
-│   │   dbcop                   # DBCop
-│   │   mono                    # MonoSAT solver by Plume authors
-│   │   Plume                   # Plume (artifact version)
-│   │   PolySI                  # PolySI (artifact version)
-```
-
 We first give a summary of our claims and then instructions for evaluating each.
 
 Our main claim is that AWDIT significantly outperforms the state-of-the-art at the task of consistency checking histories under the isolation levels Read Committed (RC), Read Atomic (RA), and Causal Consistency (CC).
@@ -271,6 +236,43 @@ This will produce two files: `results/tab1.csv` and `results/tab1-output.txt`.
 The result columns, e.g. `ours_rc (res)` (AWDIT RC Result), tells you whether the history is consistent `C`, inconsistent `I`, the solver ran out of time `DNF`, ... out of memory `OOM`, or crashed `Crash`.
 This can be compared with `results/tab1-expected.csv`.
 Finally, `results/tab1-output.txt` contains the output of running AWDIT on the history, which explains the exact violation detected.
+
+## Structure of the artifact
+
+For reference, the structure of the artifact is shown below:
+
+```
+AWDIT
+│
+└───docker
+│   │   awdit-artifact.tar.gz   # Docker image capable of running experiments
+│   │   Dockerfile              # The docker build script used to build the image
+│   │   init-runexec.sh         # Init script for the Docker container
+│
+└───histories (from histories.tar.gz)
+│   │   bench                   # Benchmarks
+│   │   tests                   # Tests
+│   │   violations              # Violations found
+│
+└───results                     # Results of the benchmarks
+│   │   fig7-tpcc-expected.csv  # Expected results for figure 7 TPC-C
+│   │   ...
+│
+└───scripts                     # Python and shell scripts to create and run benchmarks
+│   │   test-run.sh             # Test script
+│   │   reproduce-fig7.sh       # Reproduce figure 7
+│   │   reproduce-all.sh        # Reproduce all figures
+│   │   ...
+│
+└───src                         # The Rust source code for AWDIT
+│
+└───tools                       # Other tools for comparison
+│   │   CausalC+                # Datalog implementation by Plume authors
+│   │   dbcop                   # DBCop
+│   │   mono                    # MonoSAT solver by Plume authors
+│   │   Plume                   # Plume (artifact version)
+│   │   PolySI                  # PolySI (artifact version)
+```
 
 # Manual usage of AWDIT
 
