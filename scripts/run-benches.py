@@ -41,7 +41,11 @@ def run_benchexec(cmd):
 # Run with read-committed, read-atomic, or causal
 def run_ours(history, isolation):
     time, memory, _ = run_benchexec(['target/release/awdit', 'check', '--isolation', isolation, os.path.join(history, 'plume/history.txt')])
-    result = 'N/A'
+    
+    if time == 'DNF' or time == 'OOM':
+        return time, memory, time
+    
+    result = 'Crash'
     with open('output.log', 'r') as output:
         for line in output:
             if line.startswith('Consistent'):
@@ -55,7 +59,11 @@ def run_ours(history, isolation):
 # Run with RC, RA, or TCC
 def run_plume(history, isolation):
     time, memory, _ = run_benchexec(['java', '-jar', 'tools/Plume/Plume-1.0-SNAPSHOT-shaded.jar', '-i', isolation, '-t', 'PLUME', os.path.join(history, 'plume/history.txt')])
-    result = 'N/A'
+    
+    if time == 'DNF' or time == 'OOM':
+        return time, memory, time
+    
+    result = 'Crash'
     with open('output.log', 'r') as output:
         for line in output:
             if line.startswith('ACCEPT'):
@@ -68,7 +76,11 @@ def run_plume(history, isolation):
 
 def run_polysi(history):
     time, memory, _ = run_benchexec(['java', '-jar', 'tools/PolySI/PolySI-1.0.0-SNAPSHOT.jar', 'audit', '-t=TEXT', os.path.join(history, 'plume/history.txt')])
-    result = 'N/A'
+    
+    if time == 'DNF' or time == 'OOM':
+        return time, memory, time
+    
+    result = 'Crash'
     with open('output.log', 'r') as output:
         for line in output:
             if line.startswith('[[[[ ACCEPT ]]]]'):
@@ -81,7 +93,11 @@ def run_polysi(history):
 
 def run_dbcop(history):
     time, memory, exitcode = run_benchexec(['tools/dbcop/target/release/dbcop', 'verify', '--cons', 'cc', '--out_dir', 'dbcop-out', '--ver_dir', os.path.join(history, 'dbcop')])
-    result = 'N/A'
+
+    if time == 'DNF' or time == 'OOM':
+        return time, memory, time
+    
+    result = 'Crash'
     if exitcode == '0':
         result = 'C'
     elif exitcode != None:
@@ -92,7 +108,11 @@ def run_dbcop(history):
 
 def run_causalc_plus(history):
     time, memory, _ = run_benchexec(['python3', 'tools/CausalC+/clingo_txn.py', os.path.join(history, 'plume/history.txt')])
-    result = 'N/A'
+    
+    if time == 'DNF' or time == 'OOM':
+        return time, memory, time
+    
+    result = 'Crash'
     with open('output.log', 'r') as output:
         for line in output:
             if line.startswith('ACCEPT'):
@@ -105,7 +125,11 @@ def run_causalc_plus(history):
 
 def run_mono(history):
     time, memory, _ = run_benchexec(['python3', 'tools/mono/run_mono_txn.py', os.path.join(history, 'plume/history.txt')])
-    result = 'N/A'
+    
+    if time == 'DNF' or time == 'OOM':
+        return time, memory, time
+    
+    result = 'Crash'
     with open('output.log', 'r') as output:
         for line in output:
             if line.startswith('ACCEPT'):

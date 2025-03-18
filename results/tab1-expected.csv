@@ -1,0 +1,9 @@
+txns,sessions,database,script,ours_rc (res),ours_ra (res),ours_cc (res),plume_rc (res),plume_ra (res),plume_cc (res)
+85932,30,postgres,tpcc,I,I,I,I,I,I
+52930,100,postgres,tpcc,I,I,I,I,I,I
+1698605,100,postgres,tpcc,I,I,I,DNF,DNF,DNF
+87697,30,cockroachdb,tpcc,I,I,I,I,DNF,DNF
+85173,40,postgres,tpcc,I,I,I,I,I,I
+2840,50,postgres,tpcc,I,I,I,I,I,I
+28902,50,postgres,tpcc,I,I,I,I,Crash,Crash
+55022,100,cockroachdb,tpcc,I,I,I,I,I,I
