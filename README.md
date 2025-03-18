@@ -42,7 +42,7 @@ This may take a while (10 min on our server), as the uncompressed size is around
 ### Importing histories in VM
 
 You may be able to enable host-to-client drag-and-drop in VirtualBox to transfer the histories.
-Otherwise, you can create a shared folder in VirtualBox settings, which can be auto-mounted on some location on the guest.
+Otherwise, you can create a shared folder in VirtualBox settings, which can be auto-mounted on some location on the guest, e.g., `/mnt`.
 If the histories are placed here, they can then be extracted into the `AWDIT` folder on the desktop using the above command.
 
 ## Running the Docker image
