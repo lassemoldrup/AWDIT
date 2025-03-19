@@ -3,3 +3,5 @@
 histories/bench
 dbcop-out
 output.log
+# VM files
+AWDIT

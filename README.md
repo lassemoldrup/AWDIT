@@ -25,7 +25,7 @@ The images were tested with VirtualBox version 7.1.6.
 
 To use the image, open VirtualBox and go to File > Import Appliance...
 A wizard will guide you through the process of importing the VM.
-By default this will allocate 8 GiB memory, 4 processor cores, and 50 GiB storage (benchmark histories will take up 32 GiB).
+By default this will allocate 8 GiB memory, 4 processor cores, and 55 GiB storage (benchmark histories will take up 32 GiB).
 These values can be changed in VirtualBox settings afterwards, and we recommend increasing the amount of memory as much as possible.
 Afterwards, boot up the VM and log in as `user` with password `user`.
 Then follow along from the folder `AWDIT` on the desktop.
