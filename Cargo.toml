@@ -2,6 +2,7 @@
 name = "awdit"
 version = "0.2.1"
 edition = "2024"
+license = "MIT"
 
 [features]
 dbcop = ["dep:dbcop", "dep:bincode", "dep:chrono"]
