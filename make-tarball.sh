@@ -10,8 +10,13 @@ cp -R results AWDIT
 cp -R tools AWDIT
 cp Cargo.toml Cargo.lock build.rs README.md rustfmt.toml AWDIT
 
-docker buildx build --platform linux/amd64,linux/arm64 -f docker/Dockerfile -t awdit-artifact .
-docker save -o AWDIT/docker/awdit-artifact.tar.gz awdit-artifact
+docker buildx build --platform linux/arm64 \
+-o type=docker,dest=AWDIT/docker/awdit-artifact-arm64.tar.gz,compression=gzip \
+-f docker/Dockerfile -t awdit-artifact .
+
+docker buildx build --platform linux/amd64 \
+-o type=docker,dest=AWDIT/docker/awdit-artifact-amd64.tar.gz,compression=gzip \
+-f docker/Dockerfile -t awdit-artifact .
 
 chmod -R a+rwX AWDIT
 tar -cJf AWDIT.tar.xz --no-xattrs --uid 0 --gid 0 AWDIT

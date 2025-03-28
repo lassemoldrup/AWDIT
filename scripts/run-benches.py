@@ -13,7 +13,7 @@ date = datetime.now().strftime('%Y-%m-%d')
 
 def run_benchexec(cmd):
     result = subprocess.run(
-        ['runexec', '--timelimit', time_limit, '--memlimit', mem_limit, '--overlay-dir', '.', '--quiet', '--'] + cmd,
+        ['runexec', '--timelimit', time_limit, '--memlimit', mem_limit, '--no-container', '--quiet', '--'] + cmd,
         check=True,
         stdout=subprocess.PIPE,
         text=True

@@ -52,16 +52,16 @@ To start a container from the Docker image, do the following.
 
 ### 1
 
-Load the image:
+Load the image. For x86 systems, run
 
 ```shell
-sudo docker load -i docker/image.tar.gz
+sudo docker load -i docker/awdit-artifact-amd64.tar.gz
 ```
 
-Optionally, you can pass a platform (`linux/amd64` or `linux/arm64`, depending on your system):
+For ARM systems, run
 
 ```shell
-sudo docker load -i docker/image.tar.gz --platform linux/amd64
+sudo docker load -i docker/awdit-artifact-arm64.tar.gz
 ```
 
 ### 2
