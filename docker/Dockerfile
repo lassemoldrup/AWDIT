@@ -33,10 +33,6 @@ RUN rm -rf /var/lib/apt/lists/*
 # RUN cd monosat && git checkout fa810d4 && cmake -DPYTHON=ON . && make && make install
 # RUN rm -rf monosat
 
-RUN wget -qO- "https://yihui.org/tinytex/install-bin-unix.sh" | sh
-RUN tlmgr update --self
-RUN tlmgr install xcolor tikz pgfplots
-
 # Create non-root user
 RUN useradd -ms /bin/bash user
 WORKDIR /home/user/awdit
@@ -52,9 +48,13 @@ COPY scripts scripts/
 COPY results/graphs results/graphs
 COPY docker/init-runexec.sh /init-runexec.sh
 
-RUN chown -R user .
+RUN chown -R user /home/user
 # Set non-root user as default
 USER user
+
+RUN wget -qO- "https://yihui.org/tinytex/install-bin-unix.sh" | sh
+RUN tlmgr update --self
+RUN tlmgr install xcolor tikz pgfplots
 
 # Create output directory for DBCop
 RUN mkdir -p /home/user/awdit/dbcop-out
