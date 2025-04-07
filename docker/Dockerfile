@@ -25,13 +25,17 @@ RUN set -eux; \
     apt-get install -y software-properties-common; \
     add-apt-repository ppa:sosy-lab/benchmarking; \
     apt-get install -y --no-install-recommends \
-    python3 python3-pip python-is-python3 openjdk-21-jre benchexec git g++ make cmake zlib1g-dev libgmp3-dev fuse-overlayfs texlive-latex-base
+    python3 python3-pip python-is-python3 openjdk-21-jre benchexec git g++ make cmake zlib1g-dev libgmp3-dev fuse-overlayfs wget perl
 RUN rm -rf /var/lib/apt/lists/*
 
 # Install Monosat
 # RUN git clone https://github.com/sambayless/monosat.git
 # RUN cd monosat && git checkout fa810d4 && cmake -DPYTHON=ON . && make && make install
 # RUN rm -rf monosat
+
+RUN wget -qO- "https://yihui.org/tinytex/install-bin-unix.sh" | sh
+RUN tlmgr update --self
+RUN tlmgr install xcolor tikz pgfplots
 
 # Create non-root user
 RUN useradd -ms /bin/bash user
@@ -51,12 +55,6 @@ COPY docker/init-runexec.sh /init-runexec.sh
 RUN chown -R user .
 # Set non-root user as default
 USER user
-
-# Install LaTeX packages
-RUN tlmgr init-usertree
-RUN tlmgr option repository https://ctan.math.utah.edu/ctan/tex-archive/systems/texlive/tlnet
-RUN tlmgr update --self
-RUN tlmgr install xcolor tikz pgfplots
 
 # Create output directory for DBCop
 RUN mkdir -p /home/user/awdit/dbcop-out
