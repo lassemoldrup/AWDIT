@@ -33,7 +33,7 @@ if [ -f results/fig9-ops.csv ]; then
 fi
 
 cd results/graphs
-pdflatex -interaction nonstopmode main.tex > /dev/null
+pdflatex -interaction nonstopmode main.tex > /dev/null || true
 cd ../..
 mv results/graphs/main.pdf results/plot.pdf
 
