@@ -37,7 +37,7 @@ RUN wget -qO- "https://yihui.org/tinytex/install-bin-unix.sh" | sh
 RUN ln -s /root/bin/* /usr/local/bin
 RUN /root/.TinyTeX/bin/*/tlmgr path add
 RUN tlmgr update --self
-RUN tlmgr install xcolor tikz pgfplots
+RUN tlmgr install xcolor pgf pgfplots
 
 # Create non-root user
 RUN useradd -ms /bin/bash user
