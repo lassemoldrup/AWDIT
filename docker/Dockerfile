@@ -45,6 +45,7 @@ RUN cd tools/mono && pip install --break-system-packages -r requirements.txt
 COPY --from=build /awdit/tools/dbcop/target/release/dbcop tools/dbcop/target/release/dbcop
 COPY --from=build /awdit/target/release/awdit target/release/awdit
 COPY scripts scripts/
+COPY results/graphs results/graphs
 COPY docker/init-runexec.sh /init-runexec.sh
 
 RUN chown -R user .
