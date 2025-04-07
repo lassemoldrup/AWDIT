@@ -34,6 +34,7 @@ RUN rm -rf /var/lib/apt/lists/*
 # RUN rm -rf monosat
 
 # Install LaTeX packages
+ENV TEXLIVE_USERMODE=0
 RUN tlmgr install xcolor tikz pgfplots
 
 # Create non-root user

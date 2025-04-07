@@ -242,9 +242,18 @@ Finally, `results/tab1-output.txt` contains the output of running AWDIT on the h
 We also provide a script for plotting Figure 7-9 how they appear in the paper.
 This can either be run inside the container or outside, once the data has been extracted, which requires a local installation of `pdflatex`.
 To plot, run
+
 ```shell
 scripts/plot-results.sh
 ```
+
+If running inside the container, exit the container with `exit` and run
+
+```shell
+docker cp awdit-container:/home/user/awdit/results .
+```
+
+The plots will then be in `results/plots.pdf`.
 
 ## Structure of the artifact
 
