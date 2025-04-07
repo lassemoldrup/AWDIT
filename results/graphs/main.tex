@@ -1,0 +1,36 @@
+\documentclass{article}
+
+\usepackage[dvipsnames]{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{backgrounds}
+\usepackage{pgfplots}
+\usepackage[group-separator={,}, group-minimum-digits=4, text-series-to-math, propagate-math-font]{siunitx}
+\usepgfplotslibrary{groupplots}
+\pgfplotsset{compat=1.18}
+
+\newcommand{\ToolName}{\mathrm{AWDIT}}
+\newcommand{\RC}{\mathsf{RC}}
+\newcommand{\RA}{\mathsf{RA}}
+\newcommand{\CC}{\mathsf{CC}}
+
+\begin{document}
+
+\section*{Expected Results}
+
+\setcounter{figure}{6}
+\newcommand{\isExpected}{-expected}
+
+\input{all_tools_small}
+\input{scatter_all}
+\input{scalability_awdit}
+
+\section*{Experimental Results}
+
+\setcounter{figure}{6}
+\renewcommand{\isExpected}{}
+
+\input{all_tools_small}
+\input{scatter_all}
+\input{scalability_awdit}
+
+\end{document}

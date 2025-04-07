@@ -25,13 +25,13 @@ RUN set -eux; \
     apt-get install -y software-properties-common; \
     add-apt-repository ppa:sosy-lab/benchmarking; \
     apt-get install -y --no-install-recommends \
-    python3 python3-pip python-is-python3 openjdk-21-jre benchexec git g++ make cmake zlib1g-dev libgmp3-dev fuse-overlayfs
+    python3 python3-pip python-is-python3 openjdk-21-jre benchexec git g++ make cmake zlib1g-dev libgmp3-dev fuse-overlayfs texlive-latex-base
 RUN rm -rf /var/lib/apt/lists/*
 
 # Install Monosat
-RUN git clone https://github.com/lassemoldrup/monosat.git
-RUN cd monosat && cmake -DPYTHON=ON . && make && make install
-RUN rm -rf monosat
+# RUN git clone https://github.com/sambayless/monosat.git
+# RUN cd monosat && git checkout fa810d4 && cmake -DPYTHON=ON . && make && make install
+# RUN rm -rf monosat
 
 # Create non-root user
 RUN useradd -ms /bin/bash user

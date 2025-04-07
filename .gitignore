@@ -1,7 +1,17 @@
 /target
+
 # results
 histories/bench
 dbcop-out
 output.log
+
+# graphs
+results/graphs/main.aux
+results/graphs/main.pdf
+results/graphs/main.log
+results/graphs/main.synctex.gz
+results/graphs/main.fls
+results/graphs/main.fdb_latexmk
+
 # VM files
 AWDIT

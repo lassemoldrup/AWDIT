@@ -1,0 +1,75 @@
+\begin{figure}[h!]
+    \def\scaleboxvalue{0.85}
+    \def\plotheight{5cm}
+    \def\markersize{2.25}
+    \def\xmax{7200}
+    \def\ymin{\xmin}
+    \def\ymax{\xmax}
+    \def\xmin{0.5e-2}
+    \newcommand{\DrawSpeedupLines}{
+        \draw[color=gray, ultra thick] (axis cs:\xmin,\ymin) -- (axis cs:\xmax,\ymax);
+
+        \draw[color=gray, very thick] (axis cs:\xmin,10*\ymin) -- (axis cs:\xmax/10,\ymax);
+        \draw[color=gray, very thick] (axis cs:10*\xmin,\ymin) -- (axis cs:\xmax,\ymax/10);
+
+        \draw[color=gray, thick] (axis cs:\xmin,100*\ymin) -- (axis cs:\xmax/100,\ymax);
+        \draw[color=gray, thick] (axis cs:100*\xmin,\ymin) -- (axis cs:\xmax,\ymax/100);
+
+        \draw[color=gray] (axis cs:\xmin,1000*\ymin) -- (axis cs:\xmax/1000,\ymax);
+        \draw[color=gray] (axis cs:1000*\xmin,\ymin) -- (axis cs:\xmax,\ymax/1000);
+    }
+
+    \pgfplotsset{ScatterStyle/.style={
+            inner sep=1pt,
+            mark size=\markersize,
+            height=\plotheight,
+            legend style={legend pos=north west, draw=black, legend columns=1, legend cell align={left}, font=\small},
+            xlabel={$\ToolName$ (s)},
+            ylabel={Plume (s)},
+            xlabel style={font=\normalfont},
+            ylabel style={font=\normalfont},
+            ylabel near ticks,
+            xlabel near ticks,
+            %ylabel shift={-7pt},
+            xtick distance=10,
+            ytick distance=10,
+            xmin=\xmin, xmax=\xmax,
+            ymin=\ymin, ymax=\ymax,
+            xticklabel style={font=\small},
+            yticklabel style={font=\small},
+            grid style=dashed,
+        }
+    }
+    \scalebox{\scaleboxvalue}{
+        \begin{tikzpicture}[tight background, inner sep=0pt,]
+            \begin{groupplot}[
+                    group style={group size= 3 by 1, horizontal sep=1.3cm}
+                ]
+
+                \nextgroupplot[ScatterStyle, xmode=log,ymode=log, title=Read Committed]
+
+                \addplot[color=RoyalBlue, only marks, mark=* ] table [x=ours_rc (s), y=plume_rc (s), col sep=comma, restrict expr to domain={\thisrow{plume_rc (s)}}{1e-2:7199}] {data/fig8-rc-expected.csv};
+                \addplot[color=Red, only marks, mark=diamond* ] table [x=ours_rc (s), y=plume_rc (s), col sep=comma, restrict expr to domain={\thisrow{plume_rc (s)}}{7200:7200}] {data/fig8-rc-expected.csv};
+
+                \DrawSpeedupLines
+
+                \nextgroupplot[ScatterStyle, xmode=log,ymode=log, title=Read Atomic]
+
+                \addplot[color=RoyalBlue, only marks, mark=* ] table [x=ours_ra (s), y=plume_ra (s), col sep=comma, restrict expr to domain={\thisrow{plume_ra (s)}}{1e-2:7199}] {data/fig8-ra-expected.csv};
+                \addplot[color=Red, only marks, mark=diamond* ] table [x=ours_ra (s), y=plume_ra (s), col sep=comma, restrict expr to domain={\thisrow{plume_ra (s)}}{7200:7200}] {data/fig8-ra-expected.csv};
+
+                \DrawSpeedupLines
+
+                \nextgroupplot[ScatterStyle, xmode=log,ymode=log, title=Causal Consistency]
+
+                \addplot[color=RoyalBlue, only marks, mark=* ] table [x=ours_cc (s), y=plume_cc (s), col sep=comma, restrict expr to domain={\thisrow{plume_cc (s)}}{1e-2:7199}] {data/fig8-cc-expected.csv};
+                \addplot[color=Red, only marks, mark=diamond* ] table [x=ours_cc (s), y=plume_cc (s), col sep=comma, restrict expr to domain={\thisrow{plume_cc (s)}}{7200:7200}] {data/fig8-cc-expected.csv};
+
+                \DrawSpeedupLines
+
+            \end{groupplot}
+        \end{tikzpicture}
+    }
+    \caption{\label{fig:scatter} Figure 8 from the paper.
+    }
+\end{figure}
