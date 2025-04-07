@@ -56,7 +56,7 @@ USER user
 RUN wget -qO- "https://yihui.org/tinytex/install-bin-unix.sh" | sh
 ENV PATH="$PATH:/home/user/bin"
 RUN tlmgr update --self
-RUN tlmgr install xcolor pgf pgfplots
+RUN tlmgr install xcolor pgf pgfplots siunitx
 
 # Create output directory for DBCop
 RUN mkdir -p /home/user/awdit/dbcop-out
