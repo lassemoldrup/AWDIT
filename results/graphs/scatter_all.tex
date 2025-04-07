@@ -48,22 +48,22 @@
 
                 \nextgroupplot[ScatterStyle, xmode=log,ymode=log, title=Read Committed]
 
-                \addplot[color=RoyalBlue, only marks, mark=* ] table [x=ours_rc (s), y=plume_rc (s), col sep=comma, restrict expr to domain={\thisrow{plume_rc (s)}}{1e-2:7199}] {data/fig8-rc-expected.csv};
-                \addplot[color=Red, only marks, mark=diamond* ] table [x=ours_rc (s), y=plume_rc (s), col sep=comma, restrict expr to domain={\thisrow{plume_rc (s)}}{7200:7200}] {data/fig8-rc-expected.csv};
+                \addplot[color=RoyalBlue, only marks, mark=* ] table [x=ours_rc (s), y=plume_rc (s), col sep=comma, restrict expr to domain={\thisrow{plume_rc (s)}}{1e-2:7199}] {data/fig8-rc\isExpected.csv};
+                \addplot[color=Red, only marks, mark=diamond* ] table [x=ours_rc (s), y=plume_rc (s), col sep=comma, restrict expr to domain={\thisrow{plume_rc (s)}}{7200:7200}] {data/fig8-rc\isExpected.csv};
 
                 \DrawSpeedupLines
 
                 \nextgroupplot[ScatterStyle, xmode=log,ymode=log, title=Read Atomic]
 
-                \addplot[color=RoyalBlue, only marks, mark=* ] table [x=ours_ra (s), y=plume_ra (s), col sep=comma, restrict expr to domain={\thisrow{plume_ra (s)}}{1e-2:7199}] {data/fig8-ra-expected.csv};
-                \addplot[color=Red, only marks, mark=diamond* ] table [x=ours_ra (s), y=plume_ra (s), col sep=comma, restrict expr to domain={\thisrow{plume_ra (s)}}{7200:7200}] {data/fig8-ra-expected.csv};
+                \addplot[color=RoyalBlue, only marks, mark=* ] table [x=ours_ra (s), y=plume_ra (s), col sep=comma, restrict expr to domain={\thisrow{plume_ra (s)}}{1e-2:7199}] {data/fig8-ra\isExpected.csv};
+                \addplot[color=Red, only marks, mark=diamond* ] table [x=ours_ra (s), y=plume_ra (s), col sep=comma, restrict expr to domain={\thisrow{plume_ra (s)}}{7200:7200}] {data/fig8-ra\isExpected.csv};
 
                 \DrawSpeedupLines
 
                 \nextgroupplot[ScatterStyle, xmode=log,ymode=log, title=Causal Consistency]
 
-                \addplot[color=RoyalBlue, only marks, mark=* ] table [x=ours_cc (s), y=plume_cc (s), col sep=comma, restrict expr to domain={\thisrow{plume_cc (s)}}{1e-2:7199}] {data/fig8-cc-expected.csv};
-                \addplot[color=Red, only marks, mark=diamond* ] table [x=ours_cc (s), y=plume_cc (s), col sep=comma, restrict expr to domain={\thisrow{plume_cc (s)}}{7200:7200}] {data/fig8-cc-expected.csv};
+                \addplot[color=RoyalBlue, only marks, mark=* ] table [x=ours_cc (s), y=plume_cc (s), col sep=comma, restrict expr to domain={\thisrow{plume_cc (s)}}{1e-2:7199}] {data/fig8-cc\isExpected.csv};
+                \addplot[color=Red, only marks, mark=diamond* ] table [x=ours_cc (s), y=plume_cc (s), col sep=comma, restrict expr to domain={\thisrow{plume_cc (s)}}{7200:7200}] {data/fig8-cc\isExpected.csv};
 
                 \DrawSpeedupLines
 
