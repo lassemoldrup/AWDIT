@@ -34,6 +34,7 @@ RUN rm -rf /var/lib/apt/lists/*
 # RUN rm -rf monosat
 
 RUN wget -qO- "https://yihui.org/tinytex/install-bin-unix.sh" | sh
+RUN ln -s /root/bin/* /usr/local/bin
 RUN /root/.TinyTeX/bin/*/tlmgr path add
 RUN tlmgr update --self
 RUN tlmgr install xcolor tikz pgfplots
