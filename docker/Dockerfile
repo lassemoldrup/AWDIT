@@ -33,12 +33,6 @@ RUN rm -rf /var/lib/apt/lists/*
 # RUN cd monosat && git checkout fa810d4 && cmake -DPYTHON=ON . && make && make install
 # RUN rm -rf monosat
 
-RUN wget -qO- "https://yihui.org/tinytex/install-bin-unix.sh" | sh
-RUN ln -s /root/bin/* /usr/local/bin
-RUN /root/.TinyTeX/bin/*/tlmgr path add
-RUN tlmgr update --self
-RUN tlmgr install xcolor pgf pgfplots
-
 # Create non-root user
 RUN useradd -ms /bin/bash user
 WORKDIR /home/user/awdit
@@ -57,6 +51,12 @@ COPY docker/init-runexec.sh /init-runexec.sh
 RUN chown -R user /home/user
 # Set non-root user as default
 USER user
+
+# Install LaTeX packages
+RUN wget -qO- "https://yihui.org/tinytex/install-bin-unix.sh" | sh
+ENV PATH="$PATH:/home/user/bin"
+RUN tlmgr update --self
+RUN tlmgr install xcolor pgf pgfplots
 
 # Create output directory for DBCop
 RUN mkdir -p /home/user/awdit/dbcop-out
