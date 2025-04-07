@@ -237,6 +237,15 @@ The result columns, e.g. `ours_rc (res)` (AWDIT RC Result), tells you whether th
 This can be compared with `results/tab1-expected.csv`.
 Finally, `results/tab1-output.txt` contains the output of running AWDIT on the history, which explains the exact violation detected.
 
+## Plotting results
+
+We also provide a script for plotting Figure 7-9 how they appear in the paper.
+This can either be run inside the container or outside, once the data has been extracted, which requires a local installation of `pdflatex`.
+To plot, run
+```shell
+scripts/plot-results.sh
+```
+
 ## Structure of the artifact
 
 For reference, the structure of the artifact is shown below:

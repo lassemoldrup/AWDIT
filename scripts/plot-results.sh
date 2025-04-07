@@ -15,4 +15,12 @@ sed "s/DNF/600/g" results/fig9-sess.csv > results/graphs/data/fig9-sess.csv || t
 sed "s/DNF/600/g" results/fig9-ops.csv > results/graphs/data/fig9-ops.csv || true
 
 pdflatex results/graphs/main.tex
-cp results/graphs/main.pdf results/main.pdf
+cp results/graphs/main.pdf results/plot.pdf
+
+echo "Cleaning up..."
+rm results/graphs/*.aux || true
+rm results/graphs/*.log || true
+rm results/graphs/*.out || true
+rm results/graphs/*.toc || true
+rm results/graphs/*.synctex.gz || true
+rm results/graphs/*.pdf || true
