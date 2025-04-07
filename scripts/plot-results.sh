@@ -35,7 +35,7 @@ fi
 cd results/graphs
 pdflatex -interaction nonstopmode main.tex > /dev/null || true
 cd ../..
-mv results/graphs/main.pdf results/plot.pdf
+mv results/graphs/main.pdf results/plots.pdf
 
 echo "Cleaning up..."
 rm results/graphs/*.aux 2> /dev/null || true

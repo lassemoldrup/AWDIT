@@ -240,7 +240,7 @@ Finally, `results/tab1-output.txt` contains the output of running AWDIT on the h
 ## Plotting results
 
 We also provide a script for plotting Figure 7-9 how they appear in the paper.
-This can either be run inside the container or outside, once the data has been extracted, which requires a local installation of `pdflatex`.
+This can either be run inside the container or outside (once the data has been extracted), which requires a local installation of `texlive`.
 To plot, run
 
 ```shell
