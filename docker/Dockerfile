@@ -53,7 +53,10 @@ RUN chown -R user .
 USER user
 
 # Install LaTeX packages
-RUN tlmgr init-usertree && tlmgr install xcolor tikz pgfplots
+RUN tlmgr init-usertree
+RUN tlmgr option repository https://ctan.math.utah.edu/ctan/tex-archive/systems/texlive/tlnet
+RUN tlmgr update --self
+RUN tlmgr install xcolor tikz pgfplots
 
 # Create output directory for DBCop
 RUN mkdir -p /home/user/awdit/dbcop-out
